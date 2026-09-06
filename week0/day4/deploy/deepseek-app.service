@@ -1,0 +1,52 @@
+[Unit]
+Description=DeepSeek query web app
+Documentation=https://api-docs.deepseek.com/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deepseek-app
+Group=deepseek-app
+WorkingDirectory=/opt/deepseek-app
+ExecStart=/usr/bin/node /opt/deepseek-app/server.js
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+# libuv uses io_uring for file I/O on recent kernels, and systemd excludes the
+# io_uring syscalls from @system-service. Ask libuv not to use it at all.
+Environment=UV_USE_IO_URING=0
+# Holds DEEPSEEK_API_KEY=... (root-owned, chmod 640, group deepseek-app)
+EnvironmentFile=/etc/deepseek-app.env
+
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# AF_UNIX and AF_NETLINK are required: glibc's getaddrinfo() enumerates local
+# interfaces over a netlink socket, so DNS for api.deepseek.com fails without it.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# Without this, a syscall outside the set above kills the process with SIGSYS
+# (systemd reports "code=killed, signal=SYS"). Returning EPERM instead lets node
+# and libuv take their normal fallback paths. If the service still dies, comment
+# out both SystemCallFilter lines — the rest of the hardening does not use seccomp.
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+ReadOnlyPaths=/opt/deepseek-app
+
+[Install]
+WantedBy=multi-user.target

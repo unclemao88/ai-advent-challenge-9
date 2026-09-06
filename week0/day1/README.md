@@ -111,10 +111,18 @@ Check what systemd actually reported:
     systemctl status deepseek-app
     journalctl -u deepseek-app -n 50 --no-pager
 
+For a seccomp kill (`signal=SYS`), the offending syscall is only in the kernel
+log, not the unit's journal:
+
+    sudo journalctl -k -g seccomp -n 20 --no-pager   # look for syscall=<N>
+    ausyscall <N>                                    # from the auditd package
+
 | Symptom | Cause | Fix |
 |---|---|---|
 | `status=217/USER` | The `deepseek-app` user does not exist | Step 2; confirm with `id deepseek-app` |
 | `status=216/GROUP` | User exists but the group does not | `sudo groupadd deepseek-app && sudo usermod -g deepseek-app deepseek-app` |
+| `code=killed, signal=SYS` | A syscall hit the seccomp filter | Covered by `SystemCallErrorNumber=EPERM` + `UV_USE_IO_URING=0` in the unit; if it persists, comment out both `SystemCallFilter` lines |
+| `getaddrinfo EAI_AGAIN` | `RestrictAddressFamilies=` is missing `AF_NETLINK` | Use the unit as shipped — it lists `AF_UNIX AF_INET AF_INET6 AF_NETLINK` |
 | `status=203/EXEC` | `/usr/bin/node` is not there | `command -v node`, then correct `ExecStart=` |
 | `status=200/CHDIR` | `/opt/deepseek-app` missing | Step 3 |
 | `DEEPSEEK_API_KEY is not set` warning | Env file unreadable by the service user | `sudo chown root:deepseek-app /etc/deepseek-app.env && sudo chmod 640 /etc/deepseek-app.env` |

@@ -1,0 +1,43 @@
+[Unit]
+Description=DeepSeek query web app
+Documentation=https://api-docs.deepseek.com/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deepseek-app
+Group=deepseek-app
+WorkingDirectory=/opt/deepseek-app
+ExecStart=/usr/bin/node /opt/deepseek-app/server.js
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+# Holds DEEPSEEK_API_KEY=... (root-owned, chmod 640, group deepseek-app)
+EnvironmentFile=/etc/deepseek-app.env
+
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+ReadOnlyPaths=/opt/deepseek-app
+
+[Install]
+WantedBy=multi-user.target

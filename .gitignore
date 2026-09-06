@@ -1,0 +1,10 @@
+node_modules/
+npm-debug.log*
+*.log
+
+# Local secrets — the API key comes from the environment, never from the repo
+.env
+.env.*
+*.env
+
+.DS_Store

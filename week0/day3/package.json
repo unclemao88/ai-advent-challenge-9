@@ -1,0 +1,14 @@
+{
+  "name": "deepseek-query-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal web UI that forwards a prompt to the DeepSeek API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=10"
+  },
+  "license": "MIT"
+}

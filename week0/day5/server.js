@@ -299,15 +299,9 @@ function unescapeSequence(text) {
   });
 }
 
-function parseOptions(body) {
-  const modelKey = body.model === undefined || body.model === null || body.model === ''
-    ? DEFAULT_MODEL
-    : body.model;
-  if (typeof modelKey !== 'string' || !has(MODELS, modelKey)) {
-    throw badRequest('Unknown model: ' + String(modelKey));
-  }
-  const model = MODELS[modelKey];
-
+// The options that do not depend on which model answers. Compare parses these once and
+// then adapts them per model, so the two paths cannot disagree on validation.
+function parseSharedOptions(body) {
   const format = body.format === undefined || body.format === null ? 'text' : body.format;
   if (typeof format !== 'string' || !has(FORMATS, format)) {
     throw badRequest('Unknown response format: ' + String(format));
@@ -368,14 +362,7 @@ function parseOptions(body) {
     }
   }
 
-  // The page greys these out for a model that rejects them; drop them here as well, so
-  // a stale tab or a direct API call cannot turn an unsupported option into a 400.
-  if (!model.supports.temperature) temperature = null;
-  if (!model.supports.stop) stop = [];
-
   return {
-    modelKey: modelKey,
-    model: model,
     format: format,
     technique: technique,
     roles: roles,
@@ -383,6 +370,33 @@ function parseOptions(body) {
     temperature: temperature,
     stop: stop
   };
+}
+
+// Bind shared options to one model, dropping whatever it rejects. The page greys those
+// controls out; dropping here as well means a stale tab or a direct API call cannot turn
+// an unsupported option into a 400 either.
+function optionsForModel(shared, modelKey) {
+  const model = MODELS[modelKey];
+  return {
+    modelKey: modelKey,
+    model: model,
+    format: shared.format,
+    technique: shared.technique,
+    roles: shared.roles,
+    maxTokens: shared.maxTokens,
+    temperature: model.supports.temperature ? shared.temperature : null,
+    stop: model.supports.stop ? shared.stop : []
+  };
+}
+
+function parseOptions(body) {
+  const modelKey = body.model === undefined || body.model === null || body.model === ''
+    ? DEFAULT_MODEL
+    : body.model;
+  if (typeof modelKey !== 'string' || !has(MODELS, modelKey)) {
+    throw badRequest('Unknown model: ' + String(modelKey));
+  }
+  return optionsForModel(parseSharedOptions(body), modelKey);
 }
 
 function apiKeyFor(model) {
@@ -609,6 +623,83 @@ function totalMetrics(results, ms) {
   };
 }
 
+// Which model won and lost on each axis. Ties go to the first model in dropdown order,
+// and an axis is dropped entirely unless at least two models reported a figure for it —
+// with one model there is no comparison to make, only a label to mislabel it with.
+const COMPARE_AXES = [
+  { best: 'fastest', worst: 'slowest', of: metrics => metrics.ms },
+  { best: 'cheapest', worst: 'dearest', of: metrics => (metrics.cost ? metrics.cost.total : null) },
+  { best: 'leanest', worst: 'heaviest', of: metrics => (metrics.tokens ? metrics.tokens.total : null) }
+];
+
+function compareHighlights(results) {
+  const found = {};
+  COMPARE_AXES.forEach(axis => {
+    const usable = results.filter(result => result.metrics && axis.of(result.metrics) != null);
+    if (usable.length < 2) return;
+    let best = usable[0];
+    let worst = usable[0];
+    usable.forEach(result => {
+      if (axis.of(result.metrics) < axis.of(best.metrics)) best = result;
+      if (axis.of(result.metrics) > axis.of(worst.metrics)) worst = result;
+    });
+    // Everything tied: naming one of them both best and worst says nothing true.
+    if (axis.of(best.metrics) === axis.of(worst.metrics)) return;
+    found[axis.best] = best.model;
+    found[axis.worst] = worst.model;
+  });
+  return found;
+}
+
+// The same query, once per model whose key is configured, always as simple prompting:
+// the point is to compare the models, so nothing else may vary between the calls.
+async function compare(prompt, shared) {
+  const keys = Object.keys(MODELS).filter(key => apiKeyFor(MODELS[key]));
+  if (!keys.length) {
+    const err = new Error('No API key is set, so there is nothing to compare.');
+    err.status = 500;
+    throw err;
+  }
+
+  const startedAt = Date.now();
+  const results = await Promise.all(keys.map(key => {
+    const model = MODELS[key];
+    const options = optionsForModel(
+      { format: shared.format, technique: 'simple', roles: [], maxTokens: shared.maxTokens,
+        temperature: shared.temperature, stop: shared.stop },
+      key
+    );
+    return solveOnce(key, model.label, null, prompt, options)
+      .then(result => Object.assign(result, { model: key, modelId: model.id }))
+      .catch(err => ({
+        id: key,
+        model: key,
+        modelId: model.id,
+        label: model.label,
+        kind: 'answer',
+        format: shared.format,
+        answer: null,
+        error: err.message
+      }));
+  }));
+
+  // One model failing still leaves a comparison worth showing; all of them failing does not.
+  if (results.every(result => result.error)) {
+    const err = new Error(results[0].error);
+    err.status = 502;
+    throw err;
+  }
+
+  return {
+    comparison: true,
+    technique: 'simple',
+    format: shared.format,
+    metrics: totalMetrics(results, Date.now() - startedAt),
+    highlights: compareHighlights(results),
+    results: results
+  };
+}
+
 async function solve(prompt, options) {
   const startedAt = Date.now();
   let results;
@@ -683,7 +774,8 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, modelCatalogue());
   }
 
-  if (req.method === 'POST' && req.url === '/api/ask') {
+  if (req.method === 'POST' && (req.url === '/api/ask' || req.url === '/api/compare')) {
+    const comparing = req.url === '/api/compare';
     try {
       const raw = await readBody(req);
       let body;
@@ -698,6 +790,9 @@ const server = http.createServer(async (req, res) => {
       const prompt = body.prompt;
       if (typeof prompt !== 'string' || !prompt.trim()) {
         return sendJson(res, 400, { error: 'Please enter a query.' });
+      }
+      if (comparing) {
+        return sendJson(res, 200, await compare(prompt.trim(), parseSharedOptions(body)));
       }
       const options = parseOptions(body);
       if (!apiKeyFor(options.model)) {

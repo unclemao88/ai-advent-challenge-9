@@ -119,10 +119,21 @@
         </div>
       </div>
 
-      <button type="submit" class="btn btn-primary" id="submit-btn" disabled>
-        <span class="spinner-border spinner-border-sm d-none" id="spinner" role="status" aria-hidden="true"></span>
-        <span id="submit-label">Submit</span>
-      </button>
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <button type="submit" class="btn btn-primary" id="submit-btn" disabled>
+          <span class="spinner-border spinner-border-sm d-none" id="spinner" role="status" aria-hidden="true"></span>
+          <span id="submit-label">Submit</span>
+        </button>
+        <button type="button" class="btn btn-outline-primary" id="compare-btn" disabled>
+          <span class="spinner-border spinner-border-sm d-none" id="compare-spinner" role="status" aria-hidden="true"></span>
+          <span id="compare-label">Compare</span>
+        </button>
+      </div>
+      <div class="form-text" id="compare-help">
+        Compare asks every model whose key is configured the same question, as simple
+        prompting, and puts the answers side by side with their metrics. The technique
+        and role settings above do not apply to it.
+      </div>
     </form>
 
     <div id="output" class="mt-4 d-none"></div>
@@ -151,6 +162,9 @@
       var btn = document.getElementById('submit-btn');
       var spinner = document.getElementById('spinner');
       var label = document.getElementById('submit-label');
+      var compareBtn = document.getElementById('compare-btn');
+      var compareSpinner = document.getElementById('compare-spinner');
+      var compareLabel = document.getElementById('compare-label');
       var output = document.getElementById('output');
       var errorBox = document.getElementById('error');
 
@@ -164,6 +178,15 @@
       var FORMAT_LABELS = {
         text: 'Plain text', json: 'JSON', markdown: 'Markdown', xml: 'XML', csv: 'CSV'
       };
+      // Best and worst on each axis the comparison measures, in display order.
+      var HIGHLIGHTS = [
+        ['fastest', 'Fastest', 'text-bg-success'],
+        ['slowest', 'Slowest', 'text-bg-warning'],
+        ['cheapest', 'Cheapest', 'text-bg-success'],
+        ['dearest', 'Most expensive', 'text-bg-warning'],
+        ['leanest', 'Fewest tokens', 'text-bg-success'],
+        ['heaviest', 'Most tokens', 'text-bg-warning']
+      ];
       var TECHNIQUE_HELP = {
         simple: 'The query goes to the model as you typed it.',
         cot: 'The model is told to reason step by step and show the steps before concluding.',
@@ -273,13 +296,18 @@
 
       function syncButton() {
         var needsRole = techniqueEl.value === 'roles' && selectedRoles().length === 0;
-        btn.disabled = isLoading || modelEl.disabled || !promptEl.value.trim() || needsRole;
+        var empty = modelEl.disabled || !promptEl.value.trim();
+        btn.disabled = isLoading || empty || needsRole;
+        // Compare ignores the technique, so a missing role never blocks it.
+        compareBtn.disabled = isLoading || empty;
       }
 
-      function setLoading(loading) {
-        isLoading = loading;
-        spinner.classList.toggle('d-none', !loading);
-        label.textContent = loading ? ' Thinking...' : 'Submit';
+      function setLoading(action) {
+        isLoading = Boolean(action);
+        spinner.classList.toggle('d-none', action !== 'ask');
+        compareSpinner.classList.toggle('d-none', action !== 'compare');
+        label.textContent = action === 'ask' ? ' Thinking...' : 'Submit';
+        compareLabel.textContent = action === 'compare' ? ' Comparing...' : 'Compare';
         syncButton();
       }
 
@@ -429,17 +457,34 @@
         return row;
       }
 
-      function renderCard(result) {
+      function renderCard(result, highlights) {
         var card = element('div', 'card mb-3');
 
-        var header = element('div', 'card-header d-flex justify-content-between align-items-center');
-        header.appendChild(element('span', null, result.label));
+        var header = element('div',
+          'card-header d-flex flex-wrap justify-content-between align-items-center gap-2');
+
+        var title = element('span', 'd-inline-flex align-items-baseline gap-2');
+        title.appendChild(element('span', null, result.label));
+        if (result.modelId) {
+          title.appendChild(element('span', 'small text-body-secondary font-monospace', result.modelId));
+        }
+        header.appendChild(title);
+
+        var badges = element('span', 'd-inline-flex flex-wrap gap-1');
+        if (highlights) {
+          HIGHLIGHTS.forEach(function (entry) {
+            if (highlights[entry[0]] === result.model) {
+              badges.appendChild(element('span', 'badge ' + entry[2], entry[1]));
+            }
+          });
+        }
         if (result.kind === 'prompt') {
-          header.appendChild(element('span', 'badge text-bg-info', 'Step 1'));
+          badges.appendChild(element('span', 'badge text-bg-info', 'Step 1'));
         } else {
-          header.appendChild(element('span', 'badge text-bg-secondary',
+          badges.appendChild(element('span', 'badge text-bg-secondary',
             FORMAT_LABELS[result.format] || result.format));
         }
+        header.appendChild(badges);
         card.appendChild(header);
 
         var body = element('div', 'card-body');
@@ -478,11 +523,19 @@
 
       function renderResults(data) {
         output.textContent = '';
-        if (data.modelLabel) {
+
+        var caption = data.comparison
+          ? (data.metrics.calls === 1
+              ? 'Only one model has a key configured, so there is nothing to compare it with.'
+              : data.metrics.calls + ' models, same query, simple prompting.')
+          : (data.modelLabel
+              ? 'Answered by ' + data.modelLabel + ' (' + data.modelId + ')'
+                + (data.metrics && data.metrics.calls > 1 ? ' in ' + data.metrics.calls + ' calls' : '') + '.'
+              : null);
+
+        if (caption) {
           var summary = element('div', 'd-flex flex-wrap justify-content-between align-items-baseline gap-2 mb-2');
-          summary.appendChild(element('div', 'text-body-secondary small',
-            'Answered by ' + data.modelLabel + ' (' + data.modelId + ')'
-            + (data.metrics && data.metrics.calls > 1 ? ' in ' + data.metrics.calls + ' calls' : '') + '.'));
+          summary.appendChild(element('div', 'text-body-secondary small', caption));
           // Worth a line of its own only when the per-card figures do not already say it.
           if (data.metrics && data.metrics.calls > 1) {
             summary.appendChild(renderMetrics(data.metrics,
@@ -490,8 +543,9 @@
           }
           output.appendChild(summary);
         }
+
         (data.results || []).forEach(function (result) {
-          output.appendChild(renderCard(result));
+          output.appendChild(renderCard(result, data.highlights));
         });
         output.classList.remove('d-none');
       }
@@ -514,9 +568,7 @@
       syncTemperature();
       loadModels();
 
-      form.addEventListener('submit', function (e) {
-        e.preventDefault();
-
+      function run(action) {
         var maxTokensRaw = maxTokensEl.value.trim();
         output.classList.add('d-none');
         errorBox.classList.add('d-none');
@@ -528,31 +580,38 @@
           }
         }
 
-        var stop = supports('stop') ? parseStopSequences() : [];
+        var comparing = action === 'compare';
+        // Comparing spans models with different capabilities, so send the values as typed
+        // and let the server drop what each one cannot take.
+        var stop = comparing || supports('stop') ? parseStopSequences() : [];
         if (stop.length > 16) {
           return showError('At most 16 stop sequences are allowed.');
         }
 
         var roles = selectedRoles();
-        if (techniqueEl.value === 'roles' && roles.length === 0) {
+        if (!comparing && techniqueEl.value === 'roles' && roles.length === 0) {
           return showError('Select at least one role for deliberate reasoning.');
         }
 
-        setLoading(true);
+        var body = {
+          prompt: promptEl.value.trim(),
+          format: formatEl.value,
+          maxTokens: maxTokensRaw === '' ? null : Number(maxTokensRaw),
+          temperature: comparing || supports('temperature') ? Number(temperatureEl.value) : null,
+          stop: stop
+        };
+        if (!comparing) {
+          body.model = modelEl.value;
+          body.technique = techniqueEl.value;
+          body.roles = roles;
+        }
 
-        fetch('/api/ask', {
+        setLoading(action);
+
+        fetch(comparing ? '/api/compare' : '/api/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: promptEl.value.trim(),
-            model: modelEl.value,
-            technique: techniqueEl.value,
-            roles: roles,
-            format: formatEl.value,
-            maxTokens: maxTokensRaw === '' ? null : Number(maxTokensRaw),
-            temperature: supports('temperature') ? Number(temperatureEl.value) : null,
-            stop: stop
-          })
+          body: JSON.stringify(body)
         })
           .then(function (res) {
             return res.json().then(function (data) {
@@ -567,8 +626,17 @@
             showError(err.message);
           })
           .then(function () {
-            setLoading(false);
+            setLoading(null);
           });
+      }
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        run('ask');
+      });
+
+      compareBtn.addEventListener('click', function () {
+        run('compare');
       });
     })();
   </script>

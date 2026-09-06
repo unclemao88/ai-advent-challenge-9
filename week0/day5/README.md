@@ -54,6 +54,36 @@ being wrong here costs a control, whereas guessing the other way costs a rejecte
 request. If you confirm otherwise, flip `supports` in `server.js` — that one table
 drives both the greying-out and the dropping.
 
+## Compare
+
+The **Compare** button next to Submit asks the same question of every model whose
+provider key is configured, always as simple prompting, and lays the answers out
+with their metrics. Nothing but the model may vary between the calls, so the
+prompt technique and the role checkboxes do not apply to it — the response format
+and response limit do, and temperature and stop sequences are sent to whichever
+models accept them.
+
+The calls run in parallel, so a comparison takes about as long as its slowest
+model rather than the sum. A model that fails shows its error in place of an
+answer and drops out of the ranking; the request only fails outright when every
+model does. Models whose key is unset are skipped entirely rather than reported
+as failures.
+
+Six badges are awarded across the results:
+
+| Badge | Measured by |
+|---|---|
+| Fastest / Slowest | Round-trip time of the call |
+| Cheapest / Most expensive | Cost in dollars, per the pricing below |
+| Fewest tokens / Most tokens | Total tokens, prompt and completion together |
+
+Ties go to whichever model comes first in the dropdown, and an axis is dropped
+entirely when every model ties on it — naming one of them both best and worst
+would say nothing true. With only one model configured there are no badges at all.
+
+Note that cheapest and fewest-tokens usually agree but need not: a model can be
+more verbose and still cost less, which is the comparison worth seeing.
+
 ## Metrics
 
 Every answer carries a line above it with what the call spent:
@@ -246,6 +276,42 @@ supports or whether its key is configured:
 valid. Keys themselves are never included. `pricing` is USD per 1M tokens and its
 shape follows the provider — DeepSeek splits input by cache hit and miss, OpenAI
 by cached and uncached plus a `longContext` tier.
+
+### `POST /api/compare`
+
+Same body as `/api/ask` minus `model`, `technique` and `roles`, which it sets
+itself:
+
+```json
+{ "prompt": "...", "format": "text", "maxTokens": 500, "temperature": 1, "stop": [] }
+```
+
+The response is the `/api/ask` shape with two additions — `comparison: true` and
+a `highlights` object — and one result per compared model, each carrying `model`
+and `modelId` alongside its `metrics`:
+
+```json
+{
+  "comparison": true,
+  "technique": "simple",
+  "format": "text",
+  "metrics": { "ms": 2820, "calls": 2, "tokens": {}, "cost": {} },
+  "highlights": {
+    "fastest": "flash", "slowest": "pro",
+    "cheapest": "flash", "dearest": "pro",
+    "leanest": "flash", "heaviest": "pro"
+  },
+  "results": [
+    { "id": "flash", "model": "flash", "modelId": "deepseek-v4-flash",
+      "label": "DeepSeek Flash", "answer": "...", "metrics": {} }
+  ]
+}
+```
+
+Each value in `highlights` is a model key, and an axis is absent when it could not
+be decided. The top-level `ms` is the wall time of the whole comparison, so it is
+close to the slowest single call rather than the sum of them. HTTP 500 when no key
+is configured at all, 502 when every model failed.
 
 ## Configuration
 

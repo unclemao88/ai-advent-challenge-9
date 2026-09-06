@@ -29,15 +29,33 @@ Trixie ships Node 20 in the main repo:
 
     sudo apt update && sudo apt install -y nodejs nginx
 
-### 2. Service user and files
+### 2. Service user
 
-    sudo useradd --system --no-create-home --shell /usr/sbin/nologin deepseek-app
+The unit runs as a dedicated, unprivileged account. If this account is missing,
+systemd refuses to start the service with `status=217/USER` before it ever runs
+node — so create it first and verify it exists.
+
+    sudo cp deploy/deepseek-app.sysusers.conf /etc/sysusers.d/deepseek-app.conf
+    sudo systemd-sysusers
+
+Or equivalently, by hand — note `--user-group`, which also creates the matching
+group the unit's `Group=` line needs:
+
+    sudo useradd --system --user-group --no-create-home \
+         --home-dir /opt/deepseek-app --shell /usr/sbin/nologin deepseek-app
+
+Verify before moving on; this must print a uid and gid:
+
+    id deepseek-app
+
+### 3. Files
+
     sudo mkdir -p /opt/deepseek-app
     sudo rsync -a --delete ./ /opt/deepseek-app/ --exclude .git --exclude deploy
     sudo chown -R root:deepseek-app /opt/deepseek-app
     sudo chmod -R o-rwx /opt/deepseek-app
 
-### 3. API key
+### 4. API key
 
 Keep the key out of the unit file so it stays off `systemctl cat` output for
 non-privileged users:
@@ -46,7 +64,7 @@ non-privileged users:
     sudo chown root:deepseek-app /etc/deepseek-app.env
     sudo chmod 640 /etc/deepseek-app.env
 
-### 4. systemd
+### 5. systemd
 
     sudo cp deploy/deepseek-app.service /etc/systemd/system/
     sudo systemctl daemon-reload
@@ -54,7 +72,7 @@ non-privileged users:
     systemctl status deepseek-app
     curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/   # expect 200
 
-### 5. nginx
+### 6. nginx
 
 Edit `server_name` in `deploy/nginx.conf`, then:
 
@@ -63,12 +81,12 @@ Edit `server_name` in `deploy/nginx.conf`, then:
     sudo rm -f /etc/nginx/sites-enabled/default     # if the welcome page is still enabled
     sudo nginx -t && sudo systemctl reload nginx
 
-### 6. TLS
+### 7. TLS
 
     sudo apt install -y certbot python3-certbot-nginx
     sudo certbot --nginx -d example.com
 
-### 7. Firewall
+### 8. Firewall
 
 The app binds to `127.0.0.1`, so only nginx needs to be reachable:
 
@@ -85,6 +103,28 @@ The app binds to `127.0.0.1`, so only nginx needs to be reachable:
     sudo rsync -a --delete ./ /opt/deepseek-app/ --exclude .git --exclude deploy
     sudo chown -R root:deepseek-app /opt/deepseek-app
     sudo systemctl restart deepseek-app
+
+## Troubleshooting
+
+Check what systemd actually reported:
+
+    systemctl status deepseek-app
+    journalctl -u deepseek-app -n 50 --no-pager
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `status=217/USER` | The `deepseek-app` user does not exist | Step 2; confirm with `id deepseek-app` |
+| `status=216/GROUP` | User exists but the group does not | `sudo groupadd deepseek-app && sudo usermod -g deepseek-app deepseek-app` |
+| `status=203/EXEC` | `/usr/bin/node` is not there | `command -v node`, then correct `ExecStart=` |
+| `status=200/CHDIR` | `/opt/deepseek-app` missing | Step 3 |
+| `DEEPSEEK_API_KEY is not set` warning | Env file unreadable by the service user | `sudo chown root:deepseek-app /etc/deepseek-app.env && sudo chmod 640 /etc/deepseek-app.env` |
+| `EADDRINUSE` | Port 3000 already taken | `sudo ss -lntp | grep :3000`, or set `PORT=` in the unit and in nginx.conf together |
+| nginx 502 | App not running or on another port | `curl 127.0.0.1:3000` on the server |
+| nginx 504 | Completion outstripped the proxy timeout | Raise `proxy_read_timeout` and the app's 120s timeout together |
+
+After editing the unit file, always:
+
+    sudo systemctl daemon-reload && sudo systemctl restart deepseek-app
 
 ## Notes on timeouts
 

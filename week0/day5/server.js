@@ -35,18 +35,62 @@ loadEnvFile(path.join(__dirname, '.env'));
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 
+const TOKENS_PER_PRICE_UNIT = 1e6;
+
+function tokenCount(value) {
+  return typeof value === 'number' && isFinite(value) && value > 0 ? value : 0;
+}
+
+// DeepSeek bills cache hits and misses at different rates, and halves the whole bill
+// outside peak hours — 01:00-04:00 and 06:00-10:00 UTC, Monday to Friday. Which side of
+// that line a call falls on is judged when it comes back, so `at` is the finish time.
+function priceDeepseek(pricing, usage, at) {
+  const prompt = tokenCount(usage.prompt_tokens);
+  const hit = tokenCount(usage.prompt_cache_hit_tokens);
+  const miss = usage.prompt_cache_miss_tokens != null
+    ? tokenCount(usage.prompt_cache_miss_tokens)
+    : Math.max(0, prompt - hit);
+  const hour = at.getUTCHours();
+  const weekday = at.getUTCDay() >= 1 && at.getUTCDay() <= 5;
+  const peak = weekday && ((hour >= 1 && hour < 4) || (hour >= 6 && hour < 10));
+  const factor = peak ? 1 : 0.5;
+  return {
+    input: factor * (hit * pricing.cacheHit + miss * pricing.cacheMiss) / TOKENS_PER_PRICE_UNIT,
+    output: factor * tokenCount(usage.completion_tokens) * pricing.output / TOKENS_PER_PRICE_UNIT,
+    note: peak ? 'peak rate' : 'off-peak rate, half price'
+  };
+}
+
+// OpenAI discounts input tokens served from cache, and reprices the entire request at
+// 2x input / 1.5x output once the prompt passes the long-context threshold.
+function priceOpenai(pricing, usage) {
+  const prompt = tokenCount(usage.prompt_tokens);
+  const details = usage.prompt_tokens_details || {};
+  const cached = Math.min(tokenCount(details.cached_tokens), prompt);
+  const long = prompt > pricing.longContext.threshold;
+  return {
+    input: (long ? pricing.longContext.input : 1)
+      * ((prompt - cached) * pricing.input + cached * pricing.cachedInput) / TOKENS_PER_PRICE_UNIT,
+    output: (long ? pricing.longContext.output : 1)
+      * tokenCount(usage.completion_tokens) * pricing.output / TOKENS_PER_PRICE_UNIT,
+    note: long ? 'long-context rate, prompt over ' + pricing.longContext.threshold + ' tokens' : 'standard rate'
+  };
+}
+
 const PROVIDERS = {
   deepseek: {
     label: 'DeepSeek',
     hostname: 'api.deepseek.com',
     path: '/chat/completions',
-    keyVar: 'DEEPSEEK_API_KEY'
+    keyVar: 'DEEPSEEK_API_KEY',
+    price: priceDeepseek
   },
   openai: {
     label: 'OpenAI',
     hostname: 'api.openai.com',
     path: '/v1/chat/completions',
-    keyVar: 'OPENAI_API_KEY'
+    keyVar: 'OPENAI_API_KEY',
+    price: priceOpenai
   }
 };
 
@@ -58,41 +102,50 @@ const PROVIDERS = {
 // switcher and offers controls the OpenAI models reject outright (a temperature other
 // than 1, a stop list) or handle under a different parameter name, so anything not
 // supported is dropped before the request goes out rather than coming back as a 400.
+// Prices are USD per 1,000,000 tokens, from each provider's published table on
+// 2026-09-06 — DeepSeek's at the peak rate, OpenAI's at the standard rate. They belong
+// to the default ids below: override an id and the figures keep pricing the old model
+// until this table is updated to match.
 const MODELS = {
   flash: {
     label: 'DeepSeek Flash',
     provider: 'deepseek',
-    id: process.env.DEEPSEEK_MODEL_FLASH || process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-    note: 'Fast general-purpose chat. Every option on this page applies.',
-    supports: { jsonMode: true, temperature: true, stop: true, tokenParam: 'max_tokens' }
+    id: process.env.DEEPSEEK_MODEL_FLASH || process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
+    note: 'Fast general-purpose chat, and the cheapest of the five. Every option on this page applies.',
+    supports: { jsonMode: true, temperature: true, stop: true, tokenParam: 'max_tokens' },
+    pricing: { cacheHit: 0.014, cacheMiss: 0.44, output: 1.32 }
   },
   pro: {
     label: 'DeepSeek Pro',
     provider: 'deepseek',
-    id: process.env.DEEPSEEK_MODEL_PRO || 'deepseek-reasoner',
-    note: 'Reasoning model: it works the problem through before answering. Temperature is ignored and JSON is requested rather than enforced.',
-    supports: { jsonMode: false, temperature: false, stop: true, tokenParam: 'max_tokens' }
+    id: process.env.DEEPSEEK_MODEL_PRO || 'deepseek-v4-pro',
+    note: 'Stronger and roughly three times the price of Flash. Every option on this page applies.',
+    supports: { jsonMode: true, temperature: true, stop: true, tokenParam: 'max_tokens' },
+    pricing: { cacheHit: 0.044, cacheMiss: 1.32, output: 3.96 }
   },
   luna: {
     label: 'OpenAI Luna',
     provider: 'openai',
-    id: process.env.OPENAI_MODEL_LUNA || 'gpt-5-nano',
-    note: 'Smallest and cheapest of the three. Reasoning tokens count against the response limit, so leave it room.',
-    supports: { jsonMode: true, temperature: false, stop: false, tokenParam: 'max_completion_tokens' }
+    id: process.env.OPENAI_MODEL_LUNA || 'gpt-5.6-luna',
+    note: 'Smallest of the GPT-5.6 tiers. Reasoning tokens count against the response limit, so leave it room.',
+    supports: { jsonMode: true, temperature: false, stop: false, tokenParam: 'max_completion_tokens' },
+    pricing: { input: 0.20, cachedInput: 0.02, output: 1.20, longContext: { threshold: 272000, input: 2, output: 1.5 } }
   },
   terra: {
     label: 'OpenAI Terra',
     provider: 'openai',
-    id: process.env.OPENAI_MODEL_TERRA || 'gpt-5-mini',
-    note: 'Mid tier: most of the quality at a fraction of the cost. Reasoning tokens count against the response limit.',
-    supports: { jsonMode: true, temperature: false, stop: false, tokenParam: 'max_completion_tokens' }
+    id: process.env.OPENAI_MODEL_TERRA || 'gpt-5.6-terra',
+    note: 'Mid tier: most of the quality of Sol at half the price. Reasoning tokens count against the response limit.',
+    supports: { jsonMode: true, temperature: false, stop: false, tokenParam: 'max_completion_tokens' },
+    pricing: { input: 2.00, cachedInput: 0.20, output: 12.00, longContext: { threshold: 272000, input: 2, output: 1.5 } }
   },
   sol: {
     label: 'OpenAI Sol',
     provider: 'openai',
-    id: process.env.OPENAI_MODEL_SOL || 'gpt-5',
-    note: 'The strongest and slowest option. Reasoning tokens count against the response limit.',
-    supports: { jsonMode: true, temperature: false, stop: false, tokenParam: 'max_completion_tokens' }
+    id: process.env.OPENAI_MODEL_SOL || 'gpt-5.6-sol',
+    note: 'The strongest, slowest and by far the most expensive option. Reasoning tokens count against the response limit.',
+    supports: { jsonMode: true, temperature: false, stop: false, tokenParam: 'max_completion_tokens' },
+    pricing: { input: 4.00, cachedInput: 0.40, output: 20.00, longContext: { threshold: 272000, input: 2, output: 1.5 } }
   }
 };
 
@@ -351,6 +404,7 @@ function callModel(model, messages, call) {
     if (call.stop && call.stop.length) request.stop = call.stop;
 
     const payload = JSON.stringify(request);
+    const startedAt = Date.now();
 
     const req = https.request({
       hostname: provider.hostname,
@@ -390,7 +444,10 @@ function callModel(model, messages, call) {
         resolve({
           answer: text,
           finishReason: (choice && choice.finish_reason) || null,
-          usage: parsed.usage || null
+          usage: parsed.usage || null,
+          // Round trip as the app sees it: connect, generate, read the body back.
+          ms: Date.now() - startedAt,
+          finishedAt: new Date()
         });
       });
     });
@@ -401,6 +458,42 @@ function callModel(model, messages, call) {
     });
     req.end(payload);
   });
+}
+
+// What a single call cost, in the three units the page shows: wall time, tokens and
+// dollars. Usage is whatever the provider reported, so a provider that omits it leaves
+// the token and cost figures null rather than showing a confident zero.
+function measure(model, result) {
+  if (!result.usage) return { ms: result.ms, tokens: null, cost: null };
+
+  const usage = result.usage;
+  const completionDetails = usage.completion_tokens_details || {};
+  const promptDetails = usage.prompt_tokens_details || {};
+  const promptTokens = tokenCount(usage.prompt_tokens);
+  const completionTokens = tokenCount(usage.completion_tokens);
+  const cached = usage.prompt_cache_hit_tokens != null
+    ? tokenCount(usage.prompt_cache_hit_tokens)
+    : tokenCount(promptDetails.cached_tokens);
+  const price = PROVIDERS[model.provider].price(model.pricing, usage, result.finishedAt);
+
+  return {
+    ms: result.ms,
+    tokens: {
+      prompt: promptTokens,
+      completion: completionTokens,
+      total: tokenCount(usage.total_tokens) || promptTokens + completionTokens,
+      cached: cached,
+      // Billed as output, but worth separating: it is what the answer did not spend on itself.
+      reasoning: tokenCount(completionDetails.reasoning_tokens)
+    },
+    cost: {
+      currency: 'USD',
+      input: price.input,
+      output: price.output,
+      total: price.input + price.output,
+      note: price.note
+    }
+  };
 }
 
 function buildMessages(instructions, prompt) {
@@ -432,7 +525,8 @@ function solveOnce(id, label, instruction, prompt, options) {
     format: options.format,
     answer: result.answer,
     finishReason: result.finishReason,
-    usage: result.usage
+    usage: result.usage,
+    metrics: measure(options.model, result)
   }));
 }
 
@@ -456,7 +550,8 @@ async function runMeta(prompt, options) {
     format: 'text',
     answer: generated,
     finishReason: built.finishReason,
-    usage: built.usage
+    usage: built.usage,
+    metrics: measure(options.model, built)
   };
 
   // The generated prompt does not always restate the task, so carry it along.
@@ -487,7 +582,35 @@ function runRoles(prompt, options) {
   });
 }
 
+// The per-call figures added up, plus the wall time of the whole request. That is not
+// the sum of the call times: deliberate reasoning runs its calls in parallel, so the
+// total elapsed is roughly the slowest one rather than all of them.
+function totalMetrics(results, ms) {
+  const measured = results.filter(result => result.metrics && result.metrics.tokens);
+  if (!measured.length) return { ms: ms, calls: results.length, tokens: null, cost: null };
+  const add = (key, group) => measured.reduce((sum, r) => sum + r.metrics[group][key], 0);
+  return {
+    ms: ms,
+    calls: results.length,
+    tokens: {
+      prompt: add('prompt', 'tokens'),
+      completion: add('completion', 'tokens'),
+      total: add('total', 'tokens'),
+      cached: add('cached', 'tokens'),
+      reasoning: add('reasoning', 'tokens')
+    },
+    cost: {
+      currency: 'USD',
+      input: add('input', 'cost'),
+      output: add('output', 'cost'),
+      total: add('total', 'cost'),
+      note: measured[0].metrics.cost.note
+    }
+  };
+}
+
 async function solve(prompt, options) {
+  const startedAt = Date.now();
   let results;
   if (options.technique === 'meta') {
     results = await runMeta(prompt, options);
@@ -503,6 +626,7 @@ async function solve(prompt, options) {
     model: options.modelKey,
     modelLabel: options.model.label,
     modelId: options.model.id,
+    metrics: totalMetrics(results, Date.now() - startedAt),
     results: results
   };
 }
@@ -523,6 +647,7 @@ function modelCatalogue() {
         note: model.note,
         configured: Boolean(apiKeyFor(model)),
         keyVar: provider.keyVar,
+        pricing: model.pricing,
         supports: {
           jsonMode: model.supports.jsonMode,
           temperature: model.supports.temperature,

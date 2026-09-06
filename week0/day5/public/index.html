@@ -364,19 +364,69 @@
       }
 
       function describeFinish(result) {
-        var parts = [];
-        if (result.finishReason === 'length') {
-          parts.push('Truncated: hit the response limit.');
-        } else if (result.finishReason === 'stop') {
-          parts.push('Completed.');
-        } else if (result.finishReason) {
-          parts.push('Finished: ' + result.finishReason + '.');
+        if (result.finishReason === 'length') return 'Truncated: hit the response limit.';
+        if (result.finishReason === 'stop') return 'Completed.';
+        return result.finishReason ? 'Finished: ' + result.finishReason + '.' : '';
+      }
+
+      function formatDuration(ms) {
+        if (ms == null) return '—';
+        if (ms < 1000) return ms + ' ms';
+        return (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + ' s';
+      }
+
+      function formatTokens(n) {
+        return n == null ? '—' : n.toLocaleString('en-US');
+      }
+
+      // Single answers land in fractions of a cent, so a fixed 2 or 4 decimals would
+      // read as $0.00 for almost everything; widen the precision as the figure shrinks.
+      function formatCost(amount) {
+        if (amount == null) return '—';
+        if (amount === 0) return '$0';
+        if (amount < 0.01) return '$' + amount.toFixed(6);
+        if (amount < 1) return '$' + amount.toFixed(4);
+        return '$' + amount.toFixed(2);
+      }
+
+      function metricItem(value, unit, detail) {
+        var item = element('span', 'd-inline-flex align-items-baseline gap-1');
+        item.appendChild(element('span', 'fw-semibold text-body', value));
+        item.appendChild(element('span', null, unit));
+        if (detail) item.appendChild(element('span', 'text-body-tertiary', detail));
+        return item;
+      }
+
+      // What this one call spent: wall time, tokens, dollars. Sits above the answer so the
+      // cost of a technique is visible per call, not just as a total.
+      function renderMetrics(metrics, className) {
+        var row = element('div', className);
+        row.appendChild(metricItem(formatDuration(metrics.ms), 'elapsed'));
+
+        if (metrics.tokens) {
+          var breakdown = metrics.tokens.prompt.toLocaleString('en-US') + ' in · '
+            + metrics.tokens.completion.toLocaleString('en-US') + ' out';
+          if (metrics.tokens.reasoning) {
+            breakdown += ', ' + metrics.tokens.reasoning.toLocaleString('en-US') + ' of it reasoning';
+          }
+          if (metrics.tokens.cached) {
+            breakdown += ', ' + metrics.tokens.cached.toLocaleString('en-US') + ' cached';
+          }
+          row.appendChild(metricItem(formatTokens(metrics.tokens.total), 'tokens', '(' + breakdown + ')'));
+        } else {
+          row.appendChild(metricItem('—', 'tokens', '(not reported)'));
         }
-        if (result.usage && result.usage.completion_tokens != null) {
-          parts.push(result.usage.completion_tokens + ' completion tokens'
-            + (result.usage.total_tokens != null ? ' of ' + result.usage.total_tokens + ' total' : '') + '.');
+
+        if (metrics.cost) {
+          var cost = metricItem(formatCost(metrics.cost.total), '', metrics.cost.note);
+          cost.title = 'Input ' + formatCost(metrics.cost.input)
+            + ' + output ' + formatCost(metrics.cost.output) + ' (' + metrics.cost.note + ')';
+          row.appendChild(cost);
+        } else {
+          row.appendChild(metricItem('—', 'cost', '(usage not reported)'));
         }
-        return parts.join(' ');
+
+        return row;
       }
 
       function renderCard(result) {
@@ -393,6 +443,11 @@
         card.appendChild(header);
 
         var body = element('div', 'card-body');
+        if (result.metrics) {
+          body.appendChild(renderMetrics(result.metrics,
+            'd-flex flex-wrap column-gap-4 row-gap-1 small text-body-secondary border-bottom pb-2 mb-3'));
+        }
+
         var text = element('p', 'card-text mb-0');
         text.style.whiteSpace = 'pre-wrap';
         text.style.wordBreak = 'break-word';
@@ -424,8 +479,16 @@
       function renderResults(data) {
         output.textContent = '';
         if (data.modelLabel) {
-          output.appendChild(element('div', 'text-body-secondary small mb-2',
-            'Answered by ' + data.modelLabel + ' (' + data.modelId + ').'));
+          var summary = element('div', 'd-flex flex-wrap justify-content-between align-items-baseline gap-2 mb-2');
+          summary.appendChild(element('div', 'text-body-secondary small',
+            'Answered by ' + data.modelLabel + ' (' + data.modelId + ')'
+            + (data.metrics && data.metrics.calls > 1 ? ' in ' + data.metrics.calls + ' calls' : '') + '.'));
+          // Worth a line of its own only when the per-card figures do not already say it.
+          if (data.metrics && data.metrics.calls > 1) {
+            summary.appendChild(renderMetrics(data.metrics,
+              'd-flex flex-wrap column-gap-3 row-gap-1 small text-body-secondary'));
+          }
+          output.appendChild(summary);
         }
         (data.results || []).forEach(function (result) {
           output.appendChild(renderCard(result));

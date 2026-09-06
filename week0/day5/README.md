@@ -9,17 +9,18 @@ Bootstrap comes from a CDN.
 
 ## Models
 
-The **Model** dropdown picks which API the query goes to. The names in the UI are
-this app's own; each maps to a real model id, and every mapping is overridable by
-an environment variable so a rename at the provider costs a restart, not a commit.
+The **Model** dropdown picks which API the query goes to: DeepSeek's two V4 tiers
+and the three tiers of OpenAI's GPT-5.6. Each dropdown entry maps to a model id
+through an environment variable, so a rename at the provider costs a restart
+rather than a commit.
 
 | Option | Provider | Model id | Override |
 |---|---|---|---|
-| DeepSeek Flash | `api.deepseek.com` | `deepseek-chat` | `DEEPSEEK_MODEL_FLASH` |
-| DeepSeek Pro | `api.deepseek.com` | `deepseek-reasoner` | `DEEPSEEK_MODEL_PRO` |
-| OpenAI Luna | `api.openai.com` | `gpt-5-nano` | `OPENAI_MODEL_LUNA` |
-| OpenAI Terra | `api.openai.com` | `gpt-5-mini` | `OPENAI_MODEL_TERRA` |
-| OpenAI Sol | `api.openai.com` | `gpt-5` | `OPENAI_MODEL_SOL` |
+| DeepSeek Flash | `api.deepseek.com` | `deepseek-v4-flash` | `DEEPSEEK_MODEL_FLASH` |
+| DeepSeek Pro | `api.deepseek.com` | `deepseek-v4-pro` | `DEEPSEEK_MODEL_PRO` |
+| OpenAI Luna | `api.openai.com` | `gpt-5.6-luna` | `OPENAI_MODEL_LUNA` |
+| OpenAI Terra | `api.openai.com` | `gpt-5.6-terra` | `OPENAI_MODEL_TERRA` |
+| OpenAI Sol | `api.openai.com` | `gpt-5.6-sol` | `OPENAI_MODEL_SOL` |
 
 Each provider has its own key — `DEEPSEEK_API_KEY` and `OPENAI_API_KEY` — and the
 two are independent: with only one set the app still runs, and the models of the
@@ -35,18 +36,72 @@ supports; the page greys out the rest and the server drops anything unsupported
 before the request goes out — so a stale tab or a hand-made API call cannot
 produce a rejection either.
 
-| | Flash | Pro | Luna / Terra / Sol |
-|---|---|---|---|
-| Response limit | `max_tokens` | `max_tokens` | `max_completion_tokens` |
-| Temperature | yes | ignored | fixed at the default |
-| Stop sequences | yes | yes | not accepted |
-| Enforced JSON | yes | instruction only | yes |
+| | Flash / Pro | Luna / Terra / Sol |
+|---|---|---|
+| Response limit | `max_tokens` | `max_completion_tokens` |
+| Temperature | yes | fixed at the default |
+| Stop sequences | yes | not accepted |
+| Enforced JSON | yes | yes |
 
-Two consequences worth knowing. On the OpenAI models the response limit also
-covers the hidden reasoning tokens, so a limit small enough to be spent on
-thinking alone returns an empty answer with `Truncated: hit the response limit.`
-And on DeepSeek Pro the JSON option falls back to the same system-instruction
-treatment Markdown, XML and CSV get, so check that the reply parses.
+One consequence worth knowing: on the OpenAI models the response limit also covers
+the hidden reasoning tokens, so a limit small enough to be spent on thinking alone
+returns an empty answer with `Truncated: hit the response limit.`
+
+The temperature and stop entries for GPT-5.6 are deliberately conservative. The
+published reference documents both restrictions for the earlier reasoning models
+without saying either way for 5.6, so the app assumes the restriction still holds:
+being wrong here costs a control, whereas guessing the other way costs a rejected
+request. If you confirm otherwise, flip `supports` in `server.js` — that one table
+drives both the greying-out and the dropping.
+
+## Metrics
+
+Every answer carries a line above it with what the call spent:
+
+    1.84 s elapsed   1,500 tokens (1,000 in · 500 out, 300 of it reasoning, 200 cached)   $0.000507 off-peak rate, half price
+
+Time is the round trip as the app sees it — connect, generate, read the body back
+— so it includes network latency, not just generation. Tokens and the cost note
+come from the provider's own `usage` block; if a response arrives without one, the
+figures read `—` rather than a confident zero.
+
+A technique that makes several calls gets a metric line per card plus a total
+above them. The total's elapsed time is the wall time of the whole request, not
+the sum of the calls: deliberate reasoning runs its roles in parallel, so three
+calls of 1.2 s each total roughly 1.2 s, not 3.6 s.
+
+### How the cost is worked out
+
+Prices are USD per 1M tokens, taken from the providers' published tables on
+2026-09-06 and hardcoded in `MODELS`:
+
+| Model | Input | Cached input | Output |
+|---|---|---|---|
+| DeepSeek Flash | $0.44 | $0.014 | $1.32 |
+| DeepSeek Pro | $1.32 | $0.044 | $3.96 |
+| OpenAI Luna | $0.20 | $0.02 | $1.20 |
+| OpenAI Terra | $2.00 | $0.20 | $12.00 |
+| OpenAI Sol | $4.00 | $0.40 | $20.00 |
+
+Cached input is priced separately, from `prompt_cache_hit_tokens` on DeepSeek and
+`prompt_tokens_details.cached_tokens` on OpenAI. Reasoning tokens are not a
+separate line — providers bill them as output — but they are broken out in the
+display, since on the OpenAI tiers they are usually most of what you pay for.
+
+Two adjustments are applied on top:
+
+* **DeepSeek off-peak.** Everything is half price outside 01:00–04:00 and
+  06:00–10:00 UTC, Monday to Friday. The DeepSeek figures above are the peak rate;
+  the app decides which applies from the clock when the call returns, and the
+  metric line says which one it used.
+* **OpenAI long context.** A prompt over 272,000 tokens reprices the whole request
+  at 2× input and 1.5× output. The 1 MB cap on the request body makes that close to
+  unreachable here, but it is implemented rather than silently wrong.
+
+Two caveats. The prices follow the *default* model ids: override one and the old
+model's rates keep being applied until the table is updated to match. And Sol's
+$4/$20 is a promotional rate published as running at least to 2026-11-21 — when it
+lapses, the figure here needs updating by hand.
 
 ## Request options
 
@@ -77,7 +132,7 @@ types, so the options split into two groups:
 | Option | How it works |
 |---|---|
 | Plain text | `response_format: text`. No formatting imposed. |
-| JSON | `response_format: json_object` — **enforced by the API**, the reply always parses. A system message carrying the word `json` is added, which that mode requires. On a model without a JSON mode it degrades to the instruction-only treatment below. |
+| JSON | `response_format: json_object` — **enforced by the API**, the reply always parses. A system message carrying the word `json` is added, which that mode requires. All five models support it; one that did not would degrade to the instruction-only treatment below. |
 | Markdown / XML / CSV | `response_format: text` plus a system instruction. A strong request, not a guarantee — check the output if you parse it. |
 
 Pretty-printing of JSON happens in the browser; the raw reply is minified.
@@ -98,9 +153,8 @@ making several calls can spend several times over.
 It sets how much randomness goes into picking each next token: 0.0 is
 deterministic — the same query comes back near-identical every time — while the
 top of the range wanders and will break a strict response format sooner or later.
-The slider starts at 1.0, DeepSeek's own default. The OpenAI models accept no
-other value and DeepSeek Pro ignores the parameter, so the slider is disabled for
-all four and nothing is sent. Like the response limit it applies per call, so every role of a deliberate-reasoning run and both steps of
+The slider starts at 1.0, DeepSeek's own default. The three OpenAI models accept
+no other value, so the slider is disabled for them and nothing is sent. Like the response limit it applies per call, so every role of a deliberate-reasoning run and both steps of
 meta prompting are generated at the same temperature.
 
 **Stop sequences.** Maps to `stop`; the OpenAI models do not accept it, so the box
@@ -142,19 +196,33 @@ display order:
   "format": "text",
   "model": "flash",
   "modelLabel": "DeepSeek Flash",
-  "modelId": "deepseek-chat",
+  "modelId": "deepseek-v4-flash",
+  "metrics": {
+    "ms": 3412, "calls": 2,
+    "tokens": { "prompt": 2000, "completion": 1000, "total": 3000, "cached": 400, "reasoning": 0 },
+    "cost": { "currency": "USD", "input": 0.00035, "output": 0.00066,
+              "total": 0.00101, "note": "off-peak rate, half price" }
+  },
   "results": [
     { "id": "meta-prompt", "label": "Generated prompt", "kind": "prompt",
-      "format": "text", "answer": "...", "finishReason": "stop", "usage": {} },
+      "format": "text", "answer": "...", "finishReason": "stop", "usage": {},
+      "metrics": { "ms": 1600, "tokens": {}, "cost": {} } },
     { "id": "answer", "label": "Answer", "kind": "answer",
-      "format": "text", "answer": "...", "finishReason": "stop", "usage": {} }
+      "format": "text", "answer": "...", "finishReason": "stop", "usage": {},
+      "metrics": { "ms": 1812, "tokens": {}, "cost": {} } }
   ]
 }
 ```
 
 `kind` is `prompt` for the intermediate meta-prompting step and `answer`
 otherwise. A role that failed carries `"answer": null` and an `error` string
-instead.
+instead, and no `metrics`.
+
+`metrics` appears per result and once for the request as a whole; the top-level
+`ms` is wall time and `calls` the number of upstream requests, while the per-result
+`ms` times one call. `usage` is the provider's block passed through untouched —
+`metrics.tokens` is the normalised view of it, and both are `null` when the
+provider returns no usage at all.
 
 ### `GET /api/models`
 
@@ -166,15 +234,18 @@ supports or whether its key is configured:
   "default": "flash",
   "models": [
     { "key": "flash", "label": "DeepSeek Flash", "provider": "DeepSeek",
-      "id": "deepseek-chat", "note": "...", "configured": true,
+      "id": "deepseek-v4-flash", "note": "...", "configured": true,
       "keyVar": "DEEPSEEK_API_KEY",
+      "pricing": { "cacheHit": 0.014, "cacheMiss": 0.44, "output": 1.32 },
       "supports": { "jsonMode": true, "temperature": true, "stop": true } }
   ]
 }
 ```
 
 `configured` reports only whether the key variable is set, not whether it is
-valid. Keys themselves are never included.
+valid. Keys themselves are never included. `pricing` is USD per 1M tokens and its
+shape follows the provider — DeepSeek splits input by cache hit and miss, OpenAI
+by cached and uncached plus a `longContext` tier.
 
 ## Configuration
 
@@ -185,11 +256,14 @@ valid. Keys themselves are never included.
 | `HOST` | `127.0.0.1` | Localhost-only, so nginx is the sole entry point. Set `0.0.0.0` only if you really want to expose it. |
 | `PORT` | `3000` | Upstream port nginx proxies to. |
 | `DEFAULT_MODEL` | `flash` | Which entry the page opens on. Ignored if it is not a known key. |
-| `DEEPSEEK_MODEL_FLASH` | `deepseek-chat` | Falls back to `DEEPSEEK_MODEL` for compatibility with earlier days. |
-| `DEEPSEEK_MODEL_PRO` | `deepseek-reasoner` | |
-| `OPENAI_MODEL_LUNA` | `gpt-5-nano` | |
-| `OPENAI_MODEL_TERRA` | `gpt-5-mini` | |
-| `OPENAI_MODEL_SOL` | `gpt-5` | |
+| `DEEPSEEK_MODEL_FLASH` | `deepseek-v4-flash` | Falls back to `DEEPSEEK_MODEL` for compatibility with earlier days. |
+| `DEEPSEEK_MODEL_PRO` | `deepseek-v4-pro` | |
+| `OPENAI_MODEL_LUNA` | `gpt-5.6-luna` | |
+| `OPENAI_MODEL_TERRA` | `gpt-5.6-terra` | |
+| `OPENAI_MODEL_SOL` | `gpt-5.6-sol` | |
+
+Overriding a model id does **not** move its prices; those are hardcoded per entry in
+`MODELS`, so update them together or the cost figures will describe the old model.
 
 Neither key is required to boot: the app starts, warns on stdout about whichever
 is missing, and disables that provider's models in the UI.
@@ -327,7 +401,7 @@ log, not the unit's journal:
 | `status=200/CHDIR` | `/opt/deepseek-app` missing | Step 3 |
 | `DEEPSEEK_API_KEY is not set` / `OPENAI_API_KEY is not set` warning | Env file unreadable by the service user, or the key simply absent | `sudo chown root:deepseek-app /etc/deepseek-app.env && sudo chmod 640 /etc/deepseek-app.env` |
 | A model is greyed out in the dropdown | Its provider's key is not set on the server | Add it to `/etc/deepseek-app.env` and restart |
-| `OpenAI API error (gpt-5): ... unsupported value` | An option the model does not take reached it | Should not happen — the server drops those. Check the model's `supports` in `server.js` against the provider's current docs |
+| `OpenAI API error (gpt-5.6-sol): ... unsupported value` | An option the model does not take reached it | Should not happen — the server drops those. Check the model's `supports` in `server.js` against the provider's current docs |
 | `EADDRINUSE` | Port 3000 already taken | `sudo ss -lntp | grep :3000`, or set `PORT=` in the unit and in nginx.conf together |
 | nginx 502 | App not running or on another port | `curl 127.0.0.1:3000` on the server |
 | nginx 504 | Completion outstripped the proxy timeout | Raise `proxy_read_timeout` and the app's 120s timeout together |

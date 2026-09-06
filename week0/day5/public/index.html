@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model Query</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <div class="container py-5" style="max-width: 720px;">
+    <h1 class="h3 mb-4">Ask a model</h1>
+
+    <form id="query-form">
+      <div class="mb-3">
+        <label for="prompt" class="form-label">Your query</label>
+        <textarea class="form-control" id="prompt" rows="4" placeholder="Type your question..." autofocus></textarea>
+      </div>
+
+      <div class="mb-3">
+        <label for="model" class="form-label">Model</label>
+        <select class="form-select" id="model" disabled>
+          <option>Loading models...</option>
+        </select>
+        <div class="form-text" id="model-help">Which API the query is sent to.</div>
+      </div>
+
+      <div class="mb-3">
+        <label for="technique" class="form-label">Prompt technique</label>
+        <select class="form-select" id="technique">
+          <option value="simple" selected>Simple prompting</option>
+          <option value="cot">Chain of thought</option>
+          <option value="meta">Meta prompting</option>
+          <option value="roles">Deliberate reasoning</option>
+        </select>
+        <div class="form-text" id="technique-help">The query goes to the model as you typed it.</div>
+      </div>
+
+      <fieldset class="mb-3 d-none" id="roles-group">
+        <legend class="form-label mb-2">Points of view</legend>
+        <div class="row row-cols-2 row-cols-sm-3 g-2">
+          <div class="col">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="engineer" id="role-engineer" checked>
+              <label class="form-check-label" for="role-engineer">Engineer</label>
+            </div>
+          </div>
+          <div class="col">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="analytic" id="role-analytic">
+              <label class="form-check-label" for="role-analytic">Analytic</label>
+            </div>
+          </div>
+          <div class="col">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="critic" id="role-critic">
+              <label class="form-check-label" for="role-critic">Critic</label>
+            </div>
+          </div>
+          <div class="col">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="teacher" id="role-teacher">
+              <label class="form-check-label" for="role-teacher">Teacher</label>
+            </div>
+          </div>
+          <div class="col">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="lawyer" id="role-lawyer">
+              <label class="form-check-label" for="role-lawyer">Lawyer</label>
+            </div>
+          </div>
+          <div class="col">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="financier" id="role-financier">
+              <label class="form-check-label" for="role-financier">Financier</label>
+            </div>
+          </div>
+        </div>
+        <div class="form-text">One request and one answer per box ticked.</div>
+      </fieldset>
+
+      <div class="row g-3 mb-3">
+        <div class="col-sm-6">
+          <label for="format" class="form-label">Response format</label>
+          <select class="form-select" id="format">
+            <option value="text" selected>Plain text</option>
+            <option value="json">JSON</option>
+            <option value="markdown">Markdown</option>
+            <option value="xml">XML</option>
+            <option value="csv">CSV</option>
+          </select>
+          <div class="form-text" id="format-help">Free-form prose, no formatting enforced.</div>
+        </div>
+        <div class="col-sm-6">
+          <label for="max-tokens" class="form-label">Response limit</label>
+          <div class="input-group">
+            <input type="number" class="form-control" id="max-tokens" min="1" max="8192" step="1" placeholder="model default">
+            <span class="input-group-text">tokens</span>
+          </div>
+          <div class="form-text" id="max-tokens-help">1&ndash;8192. Leave empty to let the model decide.</div>
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <div class="d-flex justify-content-between align-items-center">
+          <label for="temperature" class="form-label mb-0">Temperature</label>
+          <output class="badge text-bg-secondary font-monospace" id="temperature-value" for="temperature">1.0</output>
+        </div>
+        <input type="range" class="form-range" id="temperature" min="0" max="2" step="0.1" value="1">
+        <div class="form-text" id="temperature-help">Balanced &mdash; the model's own default.</div>
+      </div>
+
+      <div class="mb-3">
+        <label for="stop" class="form-label">Stop sequences</label>
+        <textarea class="form-control font-monospace" id="stop" rows="2" placeholder="One sequence per line, e.g.&#10;END"></textarea>
+        <div class="form-text" id="stop-help">
+          Generation stops as soon as one of these appears; the sequence itself is not returned.
+          Up to 16, one per line. <code>\n</code>, <code>\t</code>, <code>\r</code> and <code>\\</code> are understood;
+          surrounding spaces are trimmed, so use an escape if you need whitespace.
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary" id="submit-btn" disabled>
+        <span class="spinner-border spinner-border-sm d-none" id="spinner" role="status" aria-hidden="true"></span>
+        <span id="submit-label">Submit</span>
+      </button>
+    </form>
+
+    <div id="output" class="mt-4 d-none"></div>
+
+    <div id="error" class="alert alert-danger mt-4 d-none" role="alert"></div>
+  </div>
+
+  <script>
+    (function () {
+      var form = document.getElementById('query-form');
+      var promptEl = document.getElementById('prompt');
+      var modelEl = document.getElementById('model');
+      var modelHelp = document.getElementById('model-help');
+      var techniqueEl = document.getElementById('technique');
+      var techniqueHelp = document.getElementById('technique-help');
+      var rolesGroup = document.getElementById('roles-group');
+      var formatEl = document.getElementById('format');
+      var formatHelp = document.getElementById('format-help');
+      var maxTokensEl = document.getElementById('max-tokens');
+      var maxTokensHelp = document.getElementById('max-tokens-help');
+      var temperatureEl = document.getElementById('temperature');
+      var temperatureValue = document.getElementById('temperature-value');
+      var temperatureHelp = document.getElementById('temperature-help');
+      var stopEl = document.getElementById('stop');
+      var stopHelp = document.getElementById('stop-help');
+      var btn = document.getElementById('submit-btn');
+      var spinner = document.getElementById('spinner');
+      var label = document.getElementById('submit-label');
+      var output = document.getElementById('output');
+      var errorBox = document.getElementById('error');
+
+      var FORMAT_HELP = {
+        text: 'Free-form prose, no formatting enforced.',
+        json: 'Enforced by the API: the reply is always a valid JSON object.',
+        markdown: 'Requested via a system instruction, not enforced by the API.',
+        xml: 'Requested via a system instruction, not enforced by the API.',
+        csv: 'Requested via a system instruction, not enforced by the API.'
+      };
+      var FORMAT_LABELS = {
+        text: 'Plain text', json: 'JSON', markdown: 'Markdown', xml: 'XML', csv: 'CSV'
+      };
+      var TECHNIQUE_HELP = {
+        simple: 'The query goes to the model as you typed it.',
+        cot: 'The model is told to reason step by step and show the steps before concluding.',
+        meta: 'Two calls: the model writes a prompt for the task, that prompt is shown, then it answers using it.',
+        roles: 'One call per role selected below, each answering the same query from its own point of view.'
+      };
+
+      // Bands of the 0.0-2.0 range, each with the first value it covers.
+      var TEMPERATURE_HELP = [
+        [0.0, 'Deterministic — the same query comes back near-identical every time.'],
+        [0.1, 'Focused — little variation, good for facts, code and strict formats.'],
+        [0.8, 'Balanced — the model\'s own default.'],
+        [1.1, 'Loose — more varied wording and ideas, less predictable.'],
+        [1.6, 'Erratic — wording wanders and strict formats may break.']
+      ];
+
+      var STOP_HELP = stopHelp.innerHTML;
+      var isLoading = false;
+      var models = {};              // key -> catalogue entry
+      // The slider keeps its position while a model that ignores temperature is selected,
+      // so switching back restores what was set rather than snapping to the default.
+      var lastTemperature = temperatureEl.value;
+
+      function currentModel() {
+        return models[modelEl.value] || null;
+      }
+
+      function supports(name) {
+        var model = currentModel();
+        // Before the catalogue arrives, assume the full set: nothing can be sent yet anyway.
+        return !model || model.supports[name];
+      }
+
+      function syncTemperature() {
+        var value = Number(temperatureEl.value);
+        temperatureValue.textContent = value.toFixed(1);
+        var help = TEMPERATURE_HELP[0][1];
+        TEMPERATURE_HELP.forEach(function (band) {
+          if (value >= band[0]) help = band[1];
+        });
+        temperatureHelp.textContent = help;
+      }
+
+      function setDisabled(el, help, disabled, message) {
+        el.disabled = disabled;
+        help.classList.toggle('text-body-secondary', disabled);
+        if (disabled) {
+          help.textContent = message;
+        }
+      }
+
+      // Each model takes a different subset of the options below; grey out what the
+      // selected one would reject, and say why rather than silently ignoring it.
+      function syncCapabilities() {
+        var model = currentModel();
+        var name = model ? model.label : 'This model';
+
+        if (model) {
+          modelHelp.textContent = model.configured
+            ? model.note + ' Sent as ' + model.id + '.'
+            : model.keyVar + ' is not set on the server, so ' + model.label + ' cannot answer.';
+          modelHelp.classList.toggle('text-danger', !model.configured);
+        }
+
+        if (supports('temperature')) {
+          if (temperatureEl.disabled) {
+            temperatureEl.disabled = false;
+            temperatureEl.value = lastTemperature;
+          }
+          temperatureHelp.classList.remove('text-body-secondary');
+          syncTemperature();
+        } else {
+          if (!temperatureEl.disabled) lastTemperature = temperatureEl.value;
+          temperatureValue.textContent = 'n/a';
+          setDisabled(temperatureEl, temperatureHelp, true,
+            name + ' has no temperature control; its own default is always used.');
+        }
+
+        if (supports('stop')) {
+          setDisabled(stopEl, stopHelp, false);
+          stopHelp.innerHTML = STOP_HELP;
+        } else {
+          setDisabled(stopEl, stopHelp, true, name + ' does not accept stop sequences; they are not sent.');
+        }
+
+        maxTokensHelp.textContent = model && model.supports.temperature === false && model.provider === 'OpenAI'
+          ? '1–8192. Also covers the hidden reasoning tokens, so a small limit can leave no answer.'
+          : '1–8192. Leave empty to let the model decide.';
+
+        syncFormatHelp();
+      }
+
+      function syncFormatHelp() {
+        var help = FORMAT_HELP[formatEl.value] || '';
+        if (formatEl.value === 'json' && !supports('jsonMode')) {
+          var model = currentModel();
+          help = 'Requested via a system instruction — ' + (model ? model.label : 'this model')
+            + ' has no enforced JSON mode, so check the reply parses.';
+        }
+        formatHelp.textContent = help;
+      }
+
+      function selectedRoles() {
+        var boxes = rolesGroup.querySelectorAll('input[type=checkbox]:checked');
+        return Array.prototype.map.call(boxes, function (box) { return box.value; });
+      }
+
+      function syncButton() {
+        var needsRole = techniqueEl.value === 'roles' && selectedRoles().length === 0;
+        btn.disabled = isLoading || modelEl.disabled || !promptEl.value.trim() || needsRole;
+      }
+
+      function setLoading(loading) {
+        isLoading = loading;
+        spinner.classList.toggle('d-none', !loading);
+        label.textContent = loading ? ' Thinking...' : 'Submit';
+        syncButton();
+      }
+
+      function showError(message) {
+        errorBox.textContent = message;
+        errorBox.classList.remove('d-none');
+      }
+
+      function element(tag, className, text) {
+        var el = document.createElement(tag);
+        if (className) el.className = className;
+        if (text != null) el.textContent = text;
+        return el;
+      }
+
+      // The switcher is built from the server's catalogue rather than hard-coded here, so
+      // the two cannot drift on what each model supports or whether its key is configured.
+      function buildModelOptions(data) {
+        models = {};
+        modelEl.textContent = '';
+
+        var groups = {};
+        data.models.forEach(function (model) {
+          models[model.key] = model;
+          if (!groups[model.provider]) {
+            groups[model.provider] = element('optgroup');
+            groups[model.provider].label = model.provider;
+            modelEl.appendChild(groups[model.provider]);
+          }
+          var option = element('option', null,
+            model.label + (model.configured ? '' : ' — ' + model.keyVar + ' not set'));
+          option.value = model.key;
+          option.disabled = !model.configured;
+          groups[model.provider].appendChild(option);
+        });
+
+        // Prefer the server's default, but never open on a model that cannot answer.
+        var choice = models[data.default] && models[data.default].configured ? data.default : null;
+        if (!choice) {
+          data.models.some(function (model) {
+            if (model.configured) { choice = model.key; return true; }
+            return false;
+          });
+        }
+        modelEl.value = choice || data.default;
+        modelEl.disabled = false;
+        syncCapabilities();
+        syncButton();
+      }
+
+      function loadModels() {
+        return fetch('/api/models')
+          .then(function (res) {
+            if (!res.ok) throw new Error('The server could not list its models (HTTP ' + res.status + ').');
+            return res.json();
+          })
+          .then(function (data) {
+            if (!data.models || !data.models.length) throw new Error('The server has no models configured.');
+            buildModelOptions(data);
+          })
+          .catch(function (err) {
+            modelEl.textContent = '';
+            modelEl.appendChild(element('option', null, 'Unavailable'));
+            showError(err.message);
+          });
+      }
+
+      function parseStopSequences() {
+        return stopEl.value.split('\n')
+          .map(function (line) { return line.trim(); })
+          .filter(function (line) { return line.length > 0; });
+      }
+
+      // JSON comes back minified; pretty-print it so it is readable.
+      function formatAnswer(answer, format) {
+        if (format !== 'json') return answer;
+        try {
+          return JSON.stringify(JSON.parse(answer), null, 2);
+        } catch (e) {
+          return answer;
+        }
+      }
+
+      function describeFinish(result) {
+        var parts = [];
+        if (result.finishReason === 'length') {
+          parts.push('Truncated: hit the response limit.');
+        } else if (result.finishReason === 'stop') {
+          parts.push('Completed.');
+        } else if (result.finishReason) {
+          parts.push('Finished: ' + result.finishReason + '.');
+        }
+        if (result.usage && result.usage.completion_tokens != null) {
+          parts.push(result.usage.completion_tokens + ' completion tokens'
+            + (result.usage.total_tokens != null ? ' of ' + result.usage.total_tokens + ' total' : '') + '.');
+        }
+        return parts.join(' ');
+      }
+
+      function renderCard(result) {
+        var card = element('div', 'card mb-3');
+
+        var header = element('div', 'card-header d-flex justify-content-between align-items-center');
+        header.appendChild(element('span', null, result.label));
+        if (result.kind === 'prompt') {
+          header.appendChild(element('span', 'badge text-bg-info', 'Step 1'));
+        } else {
+          header.appendChild(element('span', 'badge text-bg-secondary',
+            FORMAT_LABELS[result.format] || result.format));
+        }
+        card.appendChild(header);
+
+        var body = element('div', 'card-body');
+        var text = element('p', 'card-text mb-0');
+        text.style.whiteSpace = 'pre-wrap';
+        text.style.wordBreak = 'break-word';
+
+        if (result.error) {
+          text.className += ' text-danger';
+          text.textContent = result.error;
+        } else {
+          var answer = formatAnswer(result.answer, result.format);
+          if (result.format !== 'text' && result.format !== 'markdown') {
+            text.className += ' font-monospace';
+          }
+          if (answer === '') {
+            text.className += ' fst-italic text-body-secondary';
+            text.textContent = '(empty — a stop sequence matched at the very start of the answer)';
+          } else {
+            text.textContent = answer;
+          }
+        }
+        body.appendChild(text);
+        card.appendChild(body);
+
+        var meta = result.error ? '' : describeFinish(result);
+        if (meta) card.appendChild(element('div', 'card-footer text-body-secondary small', meta));
+
+        return card;
+      }
+
+      function renderResults(data) {
+        output.textContent = '';
+        if (data.modelLabel) {
+          output.appendChild(element('div', 'text-body-secondary small mb-2',
+            'Answered by ' + data.modelLabel + ' (' + data.modelId + ').'));
+        }
+        (data.results || []).forEach(function (result) {
+          output.appendChild(renderCard(result));
+        });
+        output.classList.remove('d-none');
+      }
+
+      promptEl.addEventListener('input', syncButton);
+      rolesGroup.addEventListener('change', syncButton);
+      modelEl.addEventListener('change', syncCapabilities);
+      techniqueEl.addEventListener('change', function () {
+        techniqueHelp.textContent = TECHNIQUE_HELP[techniqueEl.value] || '';
+        rolesGroup.classList.toggle('d-none', techniqueEl.value !== 'roles');
+        syncButton();
+      });
+      formatEl.addEventListener('change', syncFormatHelp);
+      temperatureEl.addEventListener('input', function () {
+        lastTemperature = temperatureEl.value;
+        syncTemperature();
+      });
+
+      syncButton();
+      syncTemperature();
+      loadModels();
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+
+        var maxTokensRaw = maxTokensEl.value.trim();
+        output.classList.add('d-none');
+        errorBox.classList.add('d-none');
+
+        if (maxTokensRaw !== '') {
+          var n = Number(maxTokensRaw);
+          if (!isFinite(n) || Math.floor(n) !== n || n < 1 || n > 8192) {
+            return showError('Response limit must be a whole number of tokens between 1 and 8192.');
+          }
+        }
+
+        var stop = supports('stop') ? parseStopSequences() : [];
+        if (stop.length > 16) {
+          return showError('At most 16 stop sequences are allowed.');
+        }
+
+        var roles = selectedRoles();
+        if (techniqueEl.value === 'roles' && roles.length === 0) {
+          return showError('Select at least one role for deliberate reasoning.');
+        }
+
+        setLoading(true);
+
+        fetch('/api/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: promptEl.value.trim(),
+            model: modelEl.value,
+            technique: techniqueEl.value,
+            roles: roles,
+            format: formatEl.value,
+            maxTokens: maxTokensRaw === '' ? null : Number(maxTokensRaw),
+            temperature: supports('temperature') ? Number(temperatureEl.value) : null,
+            stop: stop
+          })
+        })
+          .then(function (res) {
+            return res.json().then(function (data) {
+              return { ok: res.ok, data: data };
+            });
+          })
+          .then(function (result) {
+            if (!result.ok) throw new Error(result.data.error || 'Request failed.');
+            renderResults(result.data);
+          })
+          .catch(function (err) {
+            showError(err.message);
+          })
+          .then(function () {
+            setLoading(false);
+          });
+      });
+    })();
+  </script>
+</body>
+</html>

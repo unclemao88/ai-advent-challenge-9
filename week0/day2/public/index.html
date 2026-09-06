@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepSeek Query</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <div class="container py-5" style="max-width: 720px;">
+    <h1 class="h3 mb-4">Ask DeepSeek</h1>
+
+    <form id="query-form">
+      <div class="mb-3">
+        <label for="prompt" class="form-label">Your query</label>
+        <textarea class="form-control" id="prompt" rows="4" placeholder="Type your question..." autofocus></textarea>
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-sm-6">
+          <label for="format" class="form-label">Response format</label>
+          <select class="form-select" id="format">
+            <option value="text" selected>Plain text</option>
+            <option value="json">JSON</option>
+            <option value="markdown">Markdown</option>
+            <option value="xml">XML</option>
+            <option value="csv">CSV</option>
+          </select>
+          <div class="form-text" id="format-help">Free-form prose, no formatting enforced.</div>
+        </div>
+        <div class="col-sm-6">
+          <label for="max-tokens" class="form-label">Response limit</label>
+          <div class="input-group">
+            <input type="number" class="form-control" id="max-tokens" min="1" max="8192" step="1" placeholder="model default">
+            <span class="input-group-text">tokens</span>
+          </div>
+          <div class="form-text">1&ndash;8192. Leave empty to let the model decide.</div>
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <label for="stop" class="form-label">Stop sequences</label>
+        <textarea class="form-control font-monospace" id="stop" rows="2" placeholder="One sequence per line, e.g.&#10;END"></textarea>
+        <div class="form-text">
+          Generation stops as soon as one of these appears; the sequence itself is not returned.
+          Up to 16, one per line. <code>\n</code>, <code>\t</code>, <code>\r</code> and <code>\\</code> are understood;
+          surrounding spaces are trimmed, so use an escape if you need whitespace.
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary" id="submit-btn" disabled>
+        <span class="spinner-border spinner-border-sm d-none" id="spinner" role="status" aria-hidden="true"></span>
+        <span id="submit-label">Submit</span>
+      </button>
+    </form>
+
+    <div id="output" class="card mt-4 d-none">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Response</span>
+        <span class="badge text-bg-secondary d-none" id="output-format"></span>
+      </div>
+      <div class="card-body">
+        <p class="card-text mb-0" id="output-text" style="white-space: pre-wrap; word-break: break-word;"></p>
+      </div>
+      <div class="card-footer text-body-secondary small d-none" id="output-meta"></div>
+    </div>
+
+    <div id="error" class="alert alert-danger mt-4 d-none" role="alert"></div>
+  </div>
+
+  <script>
+    (function () {
+      var form = document.getElementById('query-form');
+      var promptEl = document.getElementById('prompt');
+      var formatEl = document.getElementById('format');
+      var formatHelp = document.getElementById('format-help');
+      var maxTokensEl = document.getElementById('max-tokens');
+      var stopEl = document.getElementById('stop');
+      var btn = document.getElementById('submit-btn');
+      var spinner = document.getElementById('spinner');
+      var label = document.getElementById('submit-label');
+      var output = document.getElementById('output');
+      var outputText = document.getElementById('output-text');
+      var outputFormat = document.getElementById('output-format');
+      var outputMeta = document.getElementById('output-meta');
+      var errorBox = document.getElementById('error');
+
+      var FORMAT_HELP = {
+        text: 'Free-form prose, no formatting enforced.',
+        json: 'Enforced by the API: the reply is always a valid JSON object.',
+        markdown: 'Requested via a system instruction, not enforced by the API.',
+        xml: 'Requested via a system instruction, not enforced by the API.',
+        csv: 'Requested via a system instruction, not enforced by the API.'
+      };
+      var FORMAT_LABELS = {
+        text: 'Plain text', json: 'JSON', markdown: 'Markdown', xml: 'XML', csv: 'CSV'
+      };
+
+      var isLoading = false;
+
+      function syncButton() {
+        btn.disabled = isLoading || !promptEl.value.trim();
+      }
+
+      function setLoading(loading) {
+        isLoading = loading;
+        spinner.classList.toggle('d-none', !loading);
+        label.textContent = loading ? ' Thinking...' : 'Submit';
+        syncButton();
+      }
+
+      promptEl.addEventListener('input', syncButton);
+      formatEl.addEventListener('change', function () {
+        formatHelp.textContent = FORMAT_HELP[formatEl.value] || '';
+      });
+      syncButton();
+
+      function showError(message) {
+        errorBox.textContent = message;
+        errorBox.classList.remove('d-none');
+      }
+
+      function parseStopSequences() {
+        return stopEl.value.split('\n')
+          .map(function (line) { return line.trim(); })
+          .filter(function (line) { return line.length > 0; });
+      }
+
+      // JSON comes back minified; pretty-print it so it is readable.
+      function formatAnswer(answer, format) {
+        if (format !== 'json') return answer;
+        try {
+          return JSON.stringify(JSON.parse(answer), null, 2);
+        } catch (e) {
+          return answer;
+        }
+      }
+
+      function describeFinish(result) {
+        var parts = [];
+        if (result.finishReason === 'length') {
+          parts.push('Truncated: hit the response limit.');
+        } else if (result.finishReason === 'stop') {
+          parts.push('Completed.');
+        } else if (result.finishReason) {
+          parts.push('Finished: ' + result.finishReason + '.');
+        }
+        if (result.usage && result.usage.completion_tokens != null) {
+          parts.push(result.usage.completion_tokens + ' completion tokens'
+            + (result.usage.total_tokens != null ? ' of ' + result.usage.total_tokens + ' total' : '') + '.');
+        }
+        return parts.join(' ');
+      }
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+
+        var maxTokensRaw = maxTokensEl.value.trim();
+        output.classList.add('d-none');
+        errorBox.classList.add('d-none');
+
+        if (maxTokensRaw !== '') {
+          var n = Number(maxTokensRaw);
+          if (!isFinite(n) || Math.floor(n) !== n || n < 1 || n > 8192) {
+            return showError('Response limit must be a whole number of tokens between 1 and 8192.');
+          }
+        }
+
+        var stop = parseStopSequences();
+        if (stop.length > 16) {
+          return showError('At most 16 stop sequences are allowed.');
+        }
+
+        setLoading(true);
+
+        fetch('/api/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: promptEl.value.trim(),
+            format: formatEl.value,
+            maxTokens: maxTokensRaw === '' ? null : Number(maxTokensRaw),
+            stop: stop
+          })
+        })
+          .then(function (res) {
+            return res.json().then(function (data) {
+              return { ok: res.ok, data: data };
+            });
+          })
+          .then(function (result) {
+            if (!result.ok) throw new Error(result.data.error || 'Request failed.');
+            var data = result.data;
+            var answer = formatAnswer(data.answer, data.format);
+
+            outputText.classList.toggle('font-monospace', data.format !== 'text' && data.format !== 'markdown');
+            if (answer === '') {
+              outputText.textContent = '(empty — a stop sequence matched at the very start of the answer)';
+              outputText.classList.add('fst-italic', 'text-body-secondary');
+            } else {
+              outputText.textContent = answer;
+              outputText.classList.remove('fst-italic', 'text-body-secondary');
+            }
+
+            outputFormat.textContent = FORMAT_LABELS[data.format] || data.format;
+            outputFormat.classList.remove('d-none');
+
+            var meta = describeFinish(data);
+            outputMeta.textContent = meta;
+            outputMeta.classList.toggle('d-none', !meta);
+
+            output.classList.remove('d-none');
+          })
+          .catch(function (err) {
+            showError(err.message);
+          })
+          .then(function () {
+            setLoading(false);
+          });
+      });
+    })();
+  </script>
+</body>
+</html>

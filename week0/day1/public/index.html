@@ -58,6 +58,13 @@
       promptEl.addEventListener('input', syncButton);
       syncButton();
 
+      var HINTS = {
+        413: 'The prompt was too large for the proxy.',
+        502: 'The app behind the proxy is not responding — check that the service is running.',
+        503: 'The app behind the proxy is unavailable.',
+        504: 'The request timed out at the proxy before the model answered.'
+      };
+
       function showError(message) {
         errorBox.textContent = message;
         errorBox.classList.remove('d-none');
@@ -78,14 +85,30 @@
           body: JSON.stringify({ prompt: prompt })
         })
           .then(function (res) {
-            return res.json().then(function (data) {
-              return { ok: res.ok, data: data };
+            // A proxy in front of the app (nginx 502/504, or a gateway) answers
+            // with an HTML error page, not JSON — so read text and parse defensively.
+            return res.text().then(function (body) {
+              var data = null;
+              try {
+                data = JSON.parse(body);
+              } catch (e) { /* not JSON; handled below */ }
+              return { ok: res.ok, status: res.status, statusText: res.statusText, data: data, body: body };
             });
           })
           .then(function (result) {
-            if (!result.ok) throw new Error(result.data.error || 'Request failed.');
-            outputText.textContent = result.data.answer;
-            output.classList.remove('d-none');
+            if (result.data && typeof result.data.answer === 'string') {
+              outputText.textContent = result.data.answer;
+              output.classList.remove('d-none');
+              return;
+            }
+            if (result.data && result.data.error) throw new Error(result.data.error);
+
+            var label = 'HTTP ' + result.status + (result.statusText ? ' ' + result.statusText : '');
+            var hint = HINTS[result.status];
+            throw new Error(
+              'The server did not return a valid response (' + label + ').' +
+              (hint ? ' ' + hint : '')
+            );
           })
           .catch(function (err) {
             showError(err.message);

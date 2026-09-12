@@ -1,0 +1,15 @@
+{
+  "name": "agent-chat-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal chat UI that asks an Agent; the Agent talks to DeepSeek",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/agent.test.js && node test/browser-agent.test.js"
+  },
+  "engines": {
+    "node": ">=12"
+  },
+  "license": "MIT"
+}

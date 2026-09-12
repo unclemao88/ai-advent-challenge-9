@@ -6,5 +6,7 @@ npm-debug.log*
 .env
 .env.*
 *.env
+# ...except the committed template, which holds no secrets
+!.env.example
 
 .DS_Store

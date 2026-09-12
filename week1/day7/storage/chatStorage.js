@@ -1,11 +1,15 @@
 'use strict';
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// ./data next to the project when running from a checkout. A packaged install
+// points this at a writable state directory instead (systemd's StateDirectory),
+// because the code itself is deployed read-only.
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, '..', 'data');
 const HISTORY_FILE = path.join(DATA_DIR, 'chat-history.json');
 
 // The two roles the application stores, and the label each one carries into
@@ -58,11 +62,11 @@ function loadMessages() {
     try {
       parsed = JSON.parse(raw);
     } catch (err) {
-      throw new Error('data/chat-history.json is not valid JSON: ' + err.message);
+      throw new Error(HISTORY_FILE + ' is not valid JSON: ' + err.message);
     }
     const messages = parsed && parsed.messages;
     if (!Array.isArray(messages)) {
-      throw new Error('data/chat-history.json has no "messages" array.');
+      throw new Error(HISTORY_FILE + ' has no "messages" array.');
     }
     return messages.filter(isUsableMessage);
   });

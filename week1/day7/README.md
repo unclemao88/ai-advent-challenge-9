@@ -56,6 +56,7 @@ service manager can supply the key instead.
 | `DEEPSEEK_MODEL` | no | `deepseek-chat` | The model to call. |
 | `PORT` | no | `3000` | Port to listen on. |
 | `HOST` | no | `127.0.0.1` | Interface to bind. Loopback only by default. |
+| `DATA_DIR` | no | `./data` | Where `chat-history.json` lives. A packaged install points this at a writable state directory. |
 | `DEEPSEEK_API_URL` | no | `https://api.deepseek.com/chat/completions` | Override for a proxy or a compatible endpoint. |
 | `DEEPSEEK_TIMEOUT_MS` | no | `60000` | Hard limit on one DeepSeek exchange. |
 | `DEEPSEEK_HISTORY_LIMIT` | no | `0` (all) | Replay only the last N stored messages. |
@@ -151,7 +152,11 @@ deepseek-agent/
 ├── lib/
 │   └── load-env.js          reads .env without a dependency
 ├── data/
-│   └── chat-history.json    created on first start
+│   └── chat-history.json    created on first start (DATA_DIR elsewhere in production)
+├── deploy/
+│   ├── deepseek-agent.service        systemd unit
+│   ├── deepseek-agent.sysusers.conf  service account
+│   └── nginx.conf                    reverse proxy site
 ├── public/
 │   ├── index.html
 │   ├── style.css
@@ -200,6 +205,120 @@ DEEPSEEK_MODEL=deepseek-reasoner
 ```
 
 The model name is read once, in `createAgent()`, and appears nowhere else.
+
+## Deploying on Debian behind nginx
+
+Everything below assumes Debian 12 (bookworm) or 13 (trixie) with systemd.
+The unit, the service account and the nginx site are in `deploy/`.
+
+### 1. Node and nginx
+
+    sudo apt update && sudo apt install -y nodejs npm nginx
+    node --version        # 18 or newer on bookworm/trixie; the app needs >= 10
+
+### 2. Service user
+
+systemd refuses to start the service with `status=217/USER` if this account is
+missing, before it ever runs node — so create it first and verify.
+
+    sudo cp deploy/deepseek-agent.sysusers.conf /etc/sysusers.d/deepseek-agent.conf
+    sudo systemd-sysusers
+    id deepseek-agent     # must print a uid and gid
+
+### 3. Files
+
+Unlike the earlier apps in this repo, this one has a dependency (Express), so
+`node_modules` has to exist on the box. Install it, then deploy the tree
+read-only:
+
+    npm ci --omit=dev                 # older npm: npm ci --production
+    sudo mkdir -p /opt/deepseek-agent
+    sudo rsync -a --delete ./ /opt/deepseek-agent/ \
+        --exclude .git --exclude deploy --exclude .env --exclude data
+    sudo chown -R root:deepseek-agent /opt/deepseek-agent
+    sudo chmod -R o-rwx /opt/deepseek-agent
+
+`--exclude data` matters: the deployed code is read-only, and the conversation
+lives outside it (next step).
+
+### 4. Where the memory lives
+
+The history is the agent's memory, so it must survive a redeploy. The unit sets
+`StateDirectory=deepseek-agent`, which makes systemd create
+`/var/lib/deepseek-agent` owned by the service account — writable even under
+`ProtectSystem=strict`, while `/opt/deepseek-agent` stays read-only. The app
+writes `$DATA_DIR/chat-history.json` and nothing else.
+
+Nothing to do by hand here, but if you are moving an existing conversation over:
+
+    sudo install -o deepseek-agent -g deepseek-agent -m 600 \
+        data/chat-history.json /var/lib/deepseek-agent/chat-history.json
+
+### 5. API key
+
+Kept out of the unit file so it stays off `systemctl cat` for non-privileged users:
+
+    printf 'DEEPSEEK_API_KEY=sk-your-key-here\n' | sudo tee /etc/deepseek-agent.env >/dev/null
+    sudo chown root:deepseek-agent /etc/deepseek-agent.env
+    sudo chmod 640 /etc/deepseek-agent.env
+
+### 6. systemd
+
+    sudo cp deploy/deepseek-agent.service /etc/systemd/system/
+    sudo systemd-analyze verify /etc/systemd/system/deepseek-agent.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now deepseek-agent
+    systemctl status deepseek-agent
+    curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/     # expect 200
+    sudo ls -l /var/lib/deepseek-agent/                                 # chat-history.json
+
+### 7. nginx
+
+Edit `server_name` in `deploy/nginx.conf`, then:
+
+    sudo cp deploy/nginx.conf /etc/nginx/sites-available/deepseek-agent
+    sudo ln -s /etc/nginx/sites-available/deepseek-agent /etc/nginx/sites-enabled/
+    sudo nginx -t && sudo systemctl reload nginx
+
+### 8. TLS and firewall
+
+    sudo apt install -y certbot python3-certbot-nginx
+    sudo certbot --nginx -d example.com
+    sudo ufw allow 'Nginx Full' && sudo ufw enable
+
+## Operating
+
+    sudo systemctl restart deepseek-agent    # graceful: SIGTERM drains in-flight requests
+    journalctl -u deepseek-agent -f
+
+The startup lines name the model and the history file, which is the quickest way
+to confirm what a box is actually running and where its memory is:
+
+    Agent: DeepSeek (deepseek-chat)
+    History: /var/lib/deepseek-agent/chat-history.json
+    Listening on http://127.0.0.1:3000
+
+Redeploying replaces `/opt/deepseek-agent` and leaves `/var/lib/deepseek-agent`
+alone, so the agent keeps its memory across upgrades. To wipe the conversation:
+
+    sudo systemctl stop deepseek-agent
+    sudo rm /var/lib/deepseek-agent/chat-history.json
+    sudo systemctl start deepseek-agent
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `The agent is not configured on the server` | `DEEPSEEK_API_KEY` unset or unreadable | `sudo chown root:deepseek-agent /etc/deepseek-agent.env && sudo chmod 640 /etc/deepseek-agent.env` |
+| `DeepSeek rejected the API key` | Wrong or revoked key | New key at platform.deepseek.com |
+| `status=217/USER` | The `deepseek-agent` user does not exist | Step 2; confirm with `id deepseek-agent` |
+| `Cannot find module 'express'` | `node_modules` was not deployed | Run `npm ci --omit=dev` before the rsync in step 3 |
+| `Could not open the history file: EROFS/EACCES` | `DATA_DIR` points inside the read-only tree | Keep `StateDirectory=` and `DATA_DIR=/var/lib/deepseek-agent` as shipped |
+| History empty after a redeploy | The rsync overwrote a `data/` directory in `/opt` | The memory belongs in `/var/lib/deepseek-agent`; keep `--exclude data` |
+| `code=killed, signal=SYS` | A syscall hit the seccomp filter | Covered by `SystemCallErrorNumber=EPERM` + `UV_USE_IO_URING=0`; if it persists, comment out both `SystemCallFilter` lines |
+| `getaddrinfo EAI_AGAIN` | `RestrictAddressFamilies=` is missing `AF_NETLINK` | Use the unit as shipped |
+| `EADDRINUSE` | Port 3000 already taken — the other apps in this repo default to it too | Set `PORT=` in the unit and in `nginx.conf` together |
+| nginx 504 | The answer outran the proxy timeout | Raise `proxy_read_timeout` and `DEEPSEEK_TIMEOUT_MS` together |
 
 ## Security notes
 

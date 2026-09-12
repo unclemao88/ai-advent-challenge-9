@@ -1,0 +1,65 @@
+[Unit]
+Description=DeepSeek chat agent with persistent JSON memory
+Documentation=https://api-docs.deepseek.com/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deepseek-agent
+Group=deepseek-agent
+WorkingDirectory=/opt/deepseek-agent
+ExecStart=/usr/bin/node /opt/deepseek-agent/server.js
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+Environment=DEEPSEEK_MODEL=deepseek-chat
+# The conversation is the agent's memory, so it must outlive the deployment.
+# StateDirectory creates /var/lib/deepseek-agent owned by this user (0700) and
+# makes it writable despite ProtectSystem=strict; the app writes
+# $DATA_DIR/chat-history.json and nothing else.
+StateDirectory=deepseek-agent
+StateDirectoryMode=0700
+Environment=DATA_DIR=/var/lib/deepseek-agent
+# libuv uses io_uring for file I/O on recent kernels, and systemd excludes the
+# io_uring syscalls from @system-service. Ask libuv not to use it at all.
+Environment=UV_USE_IO_URING=0
+# Holds DEEPSEEK_API_KEY=... (root-owned, chmod 640, group deepseek-agent)
+EnvironmentFile=/etc/deepseek-agent.env
+
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# AF_UNIX and AF_NETLINK are required: glibc's getaddrinfo() enumerates local
+# interfaces over a netlink socket, so DNS for api.deepseek.com fails without it.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# Without this, a syscall outside the set above kills the process with SIGSYS
+# (systemd reports "code=killed, signal=SYS"). Returning EPERM instead lets node
+# and libuv take their normal fallback paths. If the service still dies, comment
+# out both SystemCallFilter lines — the rest of the hardening does not use seccomp.
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+# The code, including node_modules, is deployed read-only; only the state
+# directory above is writable.
+ReadOnlyPaths=/opt/deepseek-agent
+# Questions and answers are personal data — keep the history file private to
+# the service account. The atomic rename inherits this mask too.
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -70,6 +70,8 @@ day8/
 ├── README.md
 ├── data/
 │   └── history.json      # created automatically on first run
+├── deploy/
+│   └── deepseek-agent.service   # systemd unit for Debian
 ├── src/
 │   ├── server.js
 │   ├── agent/
@@ -323,6 +325,78 @@ Errors always come back as `{ "error": "one readable sentence" }`.
   the server and returned as one generic sentence.
 - **Local by default.** The server binds `127.0.0.1`; override with `HOST` only
   if you understand the consequences — there is no authentication.
+
+## Running as a systemd service (Debian)
+
+`deploy/deepseek-agent.service` is a ready unit for Debian 11/12. It runs the app
+as a dedicated system user, restarts it on failure, logs to the journal, and
+confines it to a read-only filesystem apart from `data/`.
+
+Install, as root:
+
+```bash
+# 1. A system user that owns nothing else and cannot log in
+adduser --system --group --home /opt/deepseek-agent --no-create-home deepseek
+
+# 2. The application
+mkdir -p /opt/deepseek-agent
+rsync -a --exclude node_modules --exclude .env --exclude data/history.json \
+      ./ /opt/deepseek-agent/
+cd /opt/deepseek-agent
+npm ci --omit=dev            # or: npm install --production
+
+# 3. The key, readable by the service user and nobody else
+install -m 0640 -o root -g deepseek .env.example /opt/deepseek-agent/.env
+editor /opt/deepseek-agent/.env      # set DEEPSEEK_API_KEY
+
+# 4. The writable directory, and ownership
+mkdir -p /opt/deepseek-agent/data
+chown -R deepseek:deepseek /opt/deepseek-agent/data
+chown -R root:root /opt/deepseek-agent/src /opt/deepseek-agent/public
+
+# 5. The unit
+cp deploy/deepseek-agent.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now deepseek-agent
+```
+
+Check it:
+
+```bash
+systemctl status deepseek-agent
+journalctl -u deepseek-agent -f      # startup logs name the model and history file
+curl -s localhost:3000/api/history
+```
+
+Before enabling, confirm the interpreter path matches your box — the unit uses
+`/usr/bin/node`, which is correct for Debian's `nodejs` package on bullseye and
+bookworm and for NodeSource builds, but Debian 10 and older may need
+`/usr/bin/nodejs`:
+
+```bash
+command -v node
+```
+
+Notes on the unit:
+
+- **The key is never in the unit file.** Files under `/etc/systemd` are
+  world-readable; `EnvironmentFile=` points at `/opt/deepseek-agent/.env` with
+  mode 0640 instead. Variables systemd sets take precedence over the `.env` the
+  app reads itself, so there is one source of truth.
+- **`ProtectSystem=strict`** makes everything read-only except the one
+  `ReadWritePaths=/opt/deepseek-agent/data` entry, where `history.json` and its
+  atomic temporary files live. `UMask=0077` keeps the conversation private.
+- **`MemoryDenyWriteExecute` is deliberately absent** — V8's JIT needs W+X
+  pages and Node will not start with it on. `ProcSubset=pid` is left off for a
+  related reason, noted in the file.
+- **Stopping is graceful.** The server closes connections on SIGTERM and the
+  unit allows 20s for it, so a restart cannot interrupt a write to
+  `history.json`.
+- **Port and binding** come from `PORT` and `HOST` in the environment file. The
+  app binds `127.0.0.1` by default; put nginx in front rather than binding the
+  service to a public interface, since there is no authentication.
+- On **Debian 10**, drop `ProtectHostname`, `ProtectClock` and `ProtectProc` —
+  systemd 241 does not know them.
 
 ## Known limitations
 

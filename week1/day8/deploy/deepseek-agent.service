@@ -1,0 +1,89 @@
+# systemd unit for the DeepSeek agent — Debian 11 (bullseye) / 12 (bookworm).
+#
+# Assumes the app is installed at /opt/deepseek-agent and owned by a dedicated
+# system user. Full install steps: README.md → "Running as a systemd service".
+#
+# Debian note: check where node actually is before enabling this —
+#   command -v node
+# Debian's own nodejs package and NodeSource both provide /usr/bin/node on
+# bullseye and bookworm. On Debian 10 (buster) or older it may be
+# /usr/bin/nodejs instead; set ExecStart accordingly.
+
+[Unit]
+Description=DeepSeek Agent — local chat with persistent JSON memory
+Documentation=https://github.com/unclemao88/ai-advent-challenge-9/tree/main/week1/day8
+# network-online, not merely network: the first request needs outbound DNS+TLS.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=deepseek
+Group=deepseek
+
+WorkingDirectory=/opt/deepseek-agent
+ExecStart=/usr/bin/node /opt/deepseek-agent/src/server.js
+
+# The API key comes from here, never from this unit — files under /etc/systemd
+# are world-readable. Keep /opt/deepseek-agent/.env as root:deepseek 0640.
+# The app also reads .env itself; what systemd sets wins, which is what you
+# want on a server. The leading "-" lets the service still start (and report a
+# clear 503) if the file is missing, instead of failing to launch.
+EnvironmentFile=-/opt/deepseek-agent/.env
+Environment=NODE_ENV=production
+
+Restart=on-failure
+RestartSec=5s
+# The server handles SIGTERM itself and gives up after 15s; leave it room.
+TimeoutStopSec=20s
+
+# Debian's journald takes stdout/stderr by default; read it with
+#   journalctl -u deepseek-agent -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deepseek-agent
+
+# --- Hardening ------------------------------------------------------------
+# The conversation file is personal data: create it 0600, service user only.
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+
+# ProtectSystem=strict mounts the whole filesystem read-only, so name the one
+# directory the app writes: history.json and its temporary files live here.
+ReadWritePaths=/opt/deepseek-agent/data
+
+# Deliberately NOT set: MemoryDenyWriteExecute=yes — V8's JIT needs W+X pages
+# and Node refuses to start with it enabled.
+
+# Left off on purpose: ProcSubset=pid. It hides /proc/meminfo and /proc/cpuinfo,
+# which libuv and V8 may read while sizing the heap and the thread pool.
+#
+# On Debian 10 (buster, systemd 241) drop these three, which it does not know:
+#   ProtectHostname, ProtectClock, ProtectProc
+
+# Only if you bind PORT below 1024 (e.g. 80). Prefer a reverse proxy instead —
+# then also remove the empty CapabilityBoundingSet= above.
+# AmbientCapabilities=CAP_NET_BIND_SERVICE
+# CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

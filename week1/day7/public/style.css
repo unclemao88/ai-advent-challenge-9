@@ -1,0 +1,185 @@
+:root {
+  --bg: #eef1f6;
+  --surface: #ffffff;
+  --border: #d7dde8;
+  --text: #1c2432;
+  --muted: #6b7688;
+  --user-bubble: #2f6df6;
+  --user-text: #ffffff;
+  --agent-bubble: #ffffff;
+  --danger: #b3261e;
+  --danger-bg: #fdeceb;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/*
+ * The layout that keeps the form put: a full-height column in which only the
+ * history is allowed to grow, and only the history scrolls. Using 100% of a
+ * height:100% body (rather than 100vh) keeps mobile browser chrome from
+ * pushing the form off-screen.
+ */
+#app {
+  height: 100%;
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+#app-header { flex: 0 0 auto; }
+
+#app-header h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+#app-header p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+#chat-history {
+  flex: 1 1 auto;
+  min-height: 0;          /* Without this a flex item refuses to shrink and the page scrolls instead. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+#chat-history:focus-visible { outline: 2px solid var(--user-bubble); }
+
+.empty {
+  margin: auto;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.bubble {
+  max-width: 78%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--agent-bubble);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+}
+
+.bubble.user {
+  align-self: flex-end;
+  background: var(--user-bubble);
+  border-color: var(--user-bubble);
+  color: var(--user-text);
+  border-bottom-right-radius: 4px;
+}
+
+.bubble.assistant {
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+
+.bubble .tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.bubble .text {
+  margin: 6px 0;
+  white-space: pre-wrap;   /* Keep the model's line breaks without using innerHTML. */
+  overflow-wrap: anywhere;
+}
+
+.bubble .time {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.bubble.pending .text { color: var(--muted); }
+
+.dots::after {
+  content: "";
+  animation: dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes dots {
+  0%   { content: ""; }
+  25%  { content: "."; }
+  50%  { content: ".."; }
+  75%  { content: "..."; }
+}
+
+.error {
+  flex: 0 0 auto;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+#ask-form {
+  flex: 0 0 auto;          /* Never scrolls, never shrinks: always at the bottom. */
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+#question {
+  flex: 1 1 auto;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  max-height: 30vh;
+  padding: 6px;
+}
+
+#ask-button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 9px;
+  padding: 10px 22px;
+  background: var(--user-bubble);
+  color: var(--user-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#ask-button:hover:not(:disabled) { background: #2557cc; }
+#ask-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+@media (max-width: 520px) {
+  #app { padding: 10px; }
+  .bubble { max-width: 90%; }
+}

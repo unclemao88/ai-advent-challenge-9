@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepSeek Agent</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="app-header">
+      <h1>DeepSeek Agent</h1>
+      <p>Remembers the conversation, even after a restart.</p>
+    </header>
+
+    <!-- The only scrolling region on the page. -->
+    <main id="chat-history" aria-label="Chat history" aria-live="polite" tabindex="0"></main>
+
+    <div id="error" class="error" role="alert" hidden></div>
+
+    <form id="ask-form" autocomplete="off">
+      <textarea id="question" name="question" rows="2"
+                placeholder="ask your question, master"
+                aria-label="Your question" autofocus></textarea>
+      <button type="submit" id="ask-button">ask</button>
+    </form>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

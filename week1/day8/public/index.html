@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepSeek Agent</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🤖</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+
+    <header class="header">
+      <div class="header__title">
+        <span class="header__dot" aria-hidden="true"></span>
+        <h1>DeepSeek Agent</h1>
+      </div>
+      <p class="header__tokens" id="history-tokens"
+         title="Answers are counted by DeepSeek exactly; questions are estimated locally.">History: 0 tokens</p>
+    </header>
+
+    <main class="chat" id="chat" tabindex="0" aria-label="Conversation history">
+      <div class="chat__inner" id="messages" role="log" aria-live="polite"></div>
+      <p class="chat__empty" id="empty-state" hidden>
+        Nothing stored yet. Ask the first question and it will be remembered — on disk, across restarts.
+      </p>
+    </main>
+
+    <footer class="composer">
+      <div class="composer__status">
+        <span id="request-tokens">Current request: 0 tokens</span>
+        <span class="composer__hint">Ctrl/Cmd + Enter to send</span>
+      </div>
+
+      <p class="composer__error" id="error" role="alert" hidden></p>
+
+      <form class="composer__form" id="form" autocomplete="off">
+        <textarea
+          id="question"
+          name="question"
+          class="composer__input"
+          rows="1"
+          maxlength="8000"
+          placeholder="ask your question, master"
+          aria-label="Your question"></textarea>
+        <button type="submit" class="composer__button" id="submit" disabled>ask</button>
+      </form>
+    </footer>
+
+  </div>
+
+  <!-- The same counter the server uses, served from src/utils/tokenCounter.js. -->
+  <script src="/shared/tokenCounter.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

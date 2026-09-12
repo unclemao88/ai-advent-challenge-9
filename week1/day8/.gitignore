@@ -1,0 +1,14 @@
+node_modules/
+npm-debug.log*
+*.log
+
+# Local secrets — the API key comes from the environment, never from the repo
+.env
+.env.*
+!.env.example
+
+# The conversation is personal data; keep it on the machine that produced it
+data/history.json
+data/*.tmp
+
+.DS_Store

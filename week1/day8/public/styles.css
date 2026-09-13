@@ -84,6 +84,18 @@ body {
   box-shadow: 0 0 10px var(--accent);
 }
 
+.header__meta {
+  text-align: right;
+}
+
+.header__context {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+
 .header__tokens {
   margin: 0;
   font-size: 13px;

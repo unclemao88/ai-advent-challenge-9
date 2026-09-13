@@ -9,6 +9,10 @@ const tokenCounter = require('../utils/tokenCounter');
 const DEFAULT_API_URL = 'https://api.deepseek.com';
 const DEFAULT_MODEL = 'deepseek-chat';
 const DEFAULT_TIMEOUT_MS = 60000;
+// How many tokens of conversation may be replayed as context. The model itself
+// allows far more; this is a cost and latency control, since every question
+// resends the whole prompt. 0 disables the budget.
+const DEFAULT_MAX_CONTEXT_TOKENS = 20000;
 const CHAT_PATH = '/chat/completions';
 
 const SYSTEM_PROMPT =
@@ -45,7 +49,7 @@ class DeepSeekAgent {
   /**
    * @param {{apiKey: string, model?: string, apiUrl?: string,
    *          timeoutMs?: number, historyLimit?: number,
-   *          systemPrompt?: string}} options
+   *          maxContextTokens?: number, systemPrompt?: string}} options
    */
   constructor(options) {
     const opts = options || {};
@@ -57,13 +61,18 @@ class DeepSeekAgent {
     this.endpoint = resolveEndpoint(opts.apiUrl || DEFAULT_API_URL);
     this.timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
     this.systemPrompt = opts.systemPrompt || SYSTEM_PROMPT;
-    // 0 means "replay the whole conversation", which is the default.
+    // 0 means "no cap on the number of messages replayed"; the token budget
+    // below is the limit that normally binds.
     this.historyLimit = opts.historyLimit || 0;
+    this.maxContextTokens = opts.maxContextTokens === 0
+      ? 0
+      : (opts.maxContextTokens || DEFAULT_MAX_CONTEXT_TOKENS);
   }
 
   /** Short label for the startup log. Never includes the key. */
   describe() {
-    return 'DeepSeek (' + this.model + ') at ' + this.endpoint;
+    return 'DeepSeek (' + this.model + ') at ' + this.endpoint
+      + ', context budget ' + (this.maxContextTokens ? this.maxContextTokens + ' tokens' : 'unlimited');
   }
 
   /**
@@ -78,17 +87,18 @@ class DeepSeekAgent {
       return Promise.reject(new AgentError('Please enter a question.', 400));
     }
 
-    const messages = this.buildConversationContext(history || [], question.trim());
+    const plan = this.planContext(history || [], question.trim());
     const self = this;
 
-    return this._post({ model: this.model, messages: messages, stream: false })
+    return this._post({ model: this.model, messages: plan.messages, stream: false })
       .then(function (parsed) {
         return {
           answer: parseAnswer(parsed),
           usage: parseUsage(parsed),
           model: (parsed && parsed.model) || self.model,
           // Excludes the system prompt and the new question: how much memory was replayed.
-          contextMessageCount: messages.length - 2
+          contextMessageCount: plan.includedMessages,
+          context: plan.stats
         };
       });
   }
@@ -109,20 +119,70 @@ class DeepSeekAgent {
    * @returns {Array<{role: string, content: string}>}
    */
   buildConversationContext(history, currentQuestion) {
-    const messages = [{ role: 'system', content: this.systemPrompt }];
-
-    this.selectHistory(history).forEach(function (message) {
-      messages.push({ role: message.role, content: message.content });
-    });
-    messages.push({ role: 'user', content: String(currentQuestion) });
-
-    return messages;
+    return this.planContext(history, currentQuestion).messages;
   }
 
   /**
-   * Choose which stored messages to replay. Keeps everything by default;
-   * DEEPSEEK_HISTORY_LIMIT caps it to the most recent N messages. Corrupt or
-   * half-written entries are dropped here so they cannot break a request.
+   * Decide what to send, and report what that cost.
+   *
+   * The stored history is the agent's memory, but not all of it necessarily
+   * travels: messages are taken newest-first until the token budget is spent,
+   * so a long conversation keeps its recent context and drops its distant past.
+   * Nothing is deleted — history.json still holds every message; this only
+   * governs what goes over the wire.
+   *
+   * @param {Array<{role: string, content: string, tokenCount?: number}>} history Oldest first.
+   * @param {string} currentQuestion
+   * @returns {{messages: Array, includedMessages: number, stats: object}}
+   */
+  planContext(history, currentQuestion) {
+    const question = String(currentQuestion == null ? '' : currentQuestion);
+    const usable = this.selectHistory(history);
+
+    // What the budget must cover besides history: the system prompt and the
+    // question itself. Both are mandatory, so they are reserved up front.
+    const reserved = messageCost(this.systemPrompt) + messageCost(question);
+    const available = this.maxContextTokens > 0
+      ? this.maxContextTokens - reserved
+      : Infinity;
+
+    // Walk backwards from the newest message, keeping what fits. Stopping at
+    // the first message too large to fit keeps the window contiguous, rather
+    // than reaching past it for older, smaller messages and scrambling the
+    // conversation the model sees.
+    const kept = [];
+    let spent = 0;
+    for (let i = usable.length - 1; i >= 0; i -= 1) {
+      const cost = storedMessageCost(usable[i]);
+      if (spent + cost > available) break;
+      spent += cost;
+      kept.unshift(usable[i]);
+    }
+
+    const messages = [{ role: 'system', content: this.systemPrompt }];
+    kept.forEach(function (message) {
+      messages.push({ role: message.role, content: message.content });
+    });
+    messages.push({ role: 'user', content: question });
+
+    return {
+      messages: messages,
+      includedMessages: kept.length,
+      stats: {
+        budget: this.maxContextTokens || null,
+        // Estimated, because only the answers carry an exact stored count.
+        estimatedTokens: spent + reserved,
+        includedMessages: kept.length,
+        trimmedMessages: usable.length - kept.length,
+        storedMessages: usable.length
+      }
+    };
+  }
+
+  /**
+   * Which stored messages are eligible at all: well-formed, and within
+   * DEEPSEEK_HISTORY_LIMIT if one is set. The token budget is applied after
+   * this, in planContext().
    */
   selectHistory(history) {
     const usable = (Array.isArray(history) ? history : []).filter(function (message) {
@@ -135,12 +195,11 @@ class DeepSeekAgent {
   }
 
   /**
-   * What the next request would cost, as an estimate. Not used for billing or
-   * display — it exists so a future max-context rule has a number to trim on.
+   * What the next request would cost, as an estimate — after trimming, so this
+   * never exceeds the budget.
    */
   estimateContextTokens(history, currentQuestion) {
-    return tokenCounter.estimateMessagesTokens(
-      this.buildConversationContext(history, currentQuestion || ''));
+    return this.planContext(history, currentQuestion || '').stats.estimatedTokens;
   }
 
   /** One HTTP round trip, with a hard timeout and errors mapped to AgentError. */
@@ -229,7 +288,8 @@ function createAgent(env) {
     model: e.DEEPSEEK_MODEL,
     apiUrl: e.DEEPSEEK_API_URL,
     timeoutMs: positiveInt(e.DEEPSEEK_TIMEOUT_MS),
-    historyLimit: positiveInt(e.DEEPSEEK_HISTORY_LIMIT)
+    historyLimit: positiveInt(e.DEEPSEEK_HISTORY_LIMIT),
+    maxContextTokens: nonNegativeIntSetting(e.DEEPSEEK_MAX_CONTEXT_TOKENS)
   });
 }
 
@@ -242,6 +302,33 @@ function resolveEndpoint(configured) {
   if (!trimmed) return DEFAULT_API_URL + CHAT_PATH;
   if (/\/chat\/completions$/.test(trimmed)) return trimmed;
   return trimmed + CHAT_PATH;
+}
+
+/**
+ * A budget setting: a positive number, or an explicit 0 meaning "no budget".
+ * Anything else (unset, blank, nonsense) leaves the default in place.
+ */
+function nonNegativeIntSetting(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return undefined;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+}
+
+/** Tokens a piece of text costs as a chat message, framing included. */
+function messageCost(text) {
+  return tokenCounter.estimateTokens(text) + tokenCounter.MESSAGE_OVERHEAD_TOKENS;
+}
+
+/**
+ * Cost of a stored message. Prefers the count already on the record — exact for
+ * answers, since it came from DeepSeek — and estimates only when absent.
+ */
+function storedMessageCost(message) {
+  const stored = Number(message.tokenCount);
+  const content = Number.isFinite(stored) && stored >= 0
+    ? Math.round(stored)
+    : tokenCounter.estimateTokens(message.content);
+  return content + tokenCounter.MESSAGE_OVERHEAD_TOKENS;
 }
 
 function positiveInt(value) {
@@ -308,5 +395,6 @@ module.exports = {
   AgentError: AgentError,
   createAgent: createAgent,
   resolveEndpoint: resolveEndpoint,
+  DEFAULT_MAX_CONTEXT_TOKENS: DEFAULT_MAX_CONTEXT_TOKENS,
   SYSTEM_PROMPT: SYSTEM_PROMPT
 };

@@ -12,6 +12,7 @@
   var messagesEl = document.getElementById('messages');
   var emptyState = document.getElementById('empty-state');
   var historyTokensEl = document.getElementById('history-tokens');
+  var contextNoteEl = document.getElementById('context-note');
   var requestTokensEl = document.getElementById('request-tokens');
   var errorEl = document.getElementById('error');
   var form = document.getElementById('form');
@@ -123,6 +124,25 @@
     historyTokensEl.textContent = 'History: ' + counter.formatCount(count) + ' tokens';
   }
 
+  /**
+   * Say when the stored conversation no longer fits the context budget, so it
+   * is visible that the agent is working from a window rather than everything
+   * on screen. Nothing has been deleted — those messages are just not sent.
+   */
+  function setContextNote(context) {
+    if (!context || !context.budget || !context.trimmedMessages) {
+      contextNoteEl.hidden = true;
+      contextNoteEl.textContent = '';
+      return;
+    }
+    var count = context.trimmedMessages;
+    contextNoteEl.textContent = count + ' older message' + (count === 1 ? '' : 's')
+      + ' not sent — context budget ' + counter.formatCount(context.budget) + ' tokens';
+    contextNoteEl.title = 'The whole conversation is still stored. Only the most recent '
+      + context.includedMessages + ' messages fit the budget and were sent to DeepSeek.';
+    contextNoteEl.hidden = false;
+  }
+
   /** The unsent question is counted locally, as the user types. */
   function updateRequestTokens() {
     var tokens = counter.estimateTokens(input.value);
@@ -194,6 +214,7 @@
     return requestJson('/api/history').then(function (data) {
       renderHistory(data.messages || []);
       setHistoryTokens(data.historyTokenCount || 0);
+      setContextNote(data.context);
       scrollToBottom();
     }).catch(function (err) {
       showError('Could not load the stored history: ' + err.message);
@@ -217,6 +238,7 @@
       addMessage(data.request);
       addMessage(data.response);
       setHistoryTokens(data.historyTokenCount);
+      setContextNote(data.context);
 
       // Only clear the box once the exchange is safely stored and rendered, so
       // a failure never costs the user their typing.

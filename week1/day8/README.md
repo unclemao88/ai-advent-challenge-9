@@ -124,7 +124,8 @@ Optional variables:
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | Interface to bind. Local-only by default. |
 | `DEEPSEEK_TIMEOUT_MS` | `60000` | Hard limit on one API exchange. |
-| `DEEPSEEK_HISTORY_LIMIT` | `0` (all) | Replay only the most recent N stored messages. |
+| `DEEPSEEK_MAX_CONTEXT_TOKENS` | `20000` | Token budget for the conversation replayed on each request. `0` sends everything. |
+| `DEEPSEEK_HISTORY_LIMIT` | `0` (all) | Replay only the most recent N stored messages. Applied before the token budget. |
 
 `DEEPSEEK_API_URL` accepts either the base (`https://api.deepseek.com`) or the
 full endpoint (`.../chat/completions`); both resolve to the same call.
@@ -227,12 +228,42 @@ This is the real request body, not a UI decoration — the model sees the whole
 conversation on every call, which is why memory survives restarts. Messages with
 an unusable role or empty content are filtered out before sending.
 
-`selectHistory()` is the single point that decides how much of the past goes
-out. Today it sends everything, or the last N messages if
-`DEEPSEEK_HISTORY_LIMIT` is set. A maximum context size, a trimming rule, or a
-summarise-the-old-turns step belongs there and nowhere else;
-`estimateContextTokens()` already reports what the next request would cost, so a
-budget has a number to work against.
+### The context budget
+
+`planContext()` decides how much of the past goes out, and it is bounded:
+**`DEEPSEEK_MAX_CONTEXT_TOKENS`, 20,000 by default.**
+
+Messages are taken newest-first until the budget is spent. The system prompt and
+the new question are reserved first, since both are mandatory; whatever is left
+buys history. A message too large to fit stops the walk rather than being
+skipped over, so the window stays contiguous and the model never sees a
+conversation with holes punched in it.
+
+The budget is a **cost and latency control, not a model limit** — DeepSeek's
+window is far larger (see Known limitations). Because every question resends the
+whole prompt, an unbounded history makes each call progressively more expensive
+long before it would ever be refused.
+
+What it costs you: **the agent genuinely forgets.** Once a message falls outside
+the budget it is not sent, so the model cannot use it. Tell it your name, run
+20,000 tokens of other conversation, and it will no longer know your name — even
+though the message is still in `history.json` and still on screen. The header
+says so whenever this is happening:
+
+```text
+History: 45,200 tokens
+7 older messages not sent — context budget 20,000 tokens
+```
+
+Nothing is ever deleted. The budget governs only what travels.
+
+Trimming uses each message's stored `tokenCount`, which is exact for answers and
+estimated for questions, so the cut-off is approximate — set the budget with a
+little headroom rather than to the exact figure you can afford. Set it to `0` to
+send the whole conversation regardless.
+
+A summarise-the-old-turns step, or a smarter eviction rule, belongs in
+`planContext()` and nowhere else.
 
 ## Token counting
 
@@ -275,8 +306,19 @@ estimated is prefixed with `~` in the interface.
 The full stored conversation, oldest first.
 
 ```json
-{ "messages": [ ... ], "historyTokenCount": 0, "updatedAt": "2026-09-12T12:05:00.000Z" }
+{
+  "messages": [ ... ],
+  "historyTokenCount": 0,
+  "updatedAt": "2026-09-12T12:05:00.000Z",
+  "context": {
+    "budget": 20000, "estimatedTokens": 371,
+    "includedMessages": 16, "trimmedMessages": 0, "storedMessages": 16
+  }
+}
 ```
+
+`context` reports what the *next* request would replay, so the page can show a
+trimming notice as soon as it loads.
 
 ### `POST /api/ask`
 
@@ -292,7 +334,11 @@ stores both messages, and returns them with the new total:
   "request":  { "id": "abc", "type": "request",  "tag": "you asked",      "role": "user",      "content": "What is Node.js?", "timestamp": "...", "tokenCount": 6,  "tokenSource": "estimate" },
   "response": { "id": "def", "type": "response", "tag": "agent answered", "role": "assistant", "content": "Node.js is...",    "timestamp": "...", "tokenCount": 32, "tokenSource": "api" },
   "historyTokenCount": 38,
-  "context": { "replayedMessages": 2, "promptTokens": 123, "totalTokens": 155, "model": "deepseek-chat" }
+  "context": {
+    "replayedMessages": 2, "trimmedMessages": 0,
+    "budget": 20000, "estimatedTokens": 346,
+    "promptTokens": 123, "totalTokens": 155, "model": "deepseek-chat"
+  }
 }
 ```
 
@@ -443,10 +489,16 @@ Notes on the unit:
 
 - **Local token counts are estimates**, as described above. Only DeepSeek's
   reported answer counts are exact.
-- **The whole conversation is replayed** on every request by default. A long
-  history means a large prompt, and eventually the model's context limit. Set
-  `DEEPSEEK_HISTORY_LIMIT` as a stop-gap; real trimming or summarising is the
-  intended next step, and `selectHistory()` is where it goes.
+- **The agent forgets past the budget.** `DEEPSEEK_MAX_CONTEXT_TOKENS` (20,000)
+  caps what is replayed, so a conversation longer than that keeps its recent
+  context and loses its distant past. Old messages are dropped, not summarised,
+  so information in them is simply gone from the model's view while remaining
+  visible in the UI — which can read as the agent contradicting what is on
+  screen. Summarising evicted turns is the fix, and `planContext()` is where it
+  belongs.
+- **The budget is enforced on estimated counts** for questions (answers carry
+  DeepSeek's exact number), so the real prompt may differ from the budget by a
+  little. It is a cost control, not a hard guarantee.
 - **One conversation, one file.** No sessions, no users, no per-thread history.
 - **No authentication**, so do not expose the port beyond your machine.
 - **No streaming.** The answer appears when it is complete; a "thinking"

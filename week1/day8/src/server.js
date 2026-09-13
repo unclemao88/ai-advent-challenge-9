@@ -52,7 +52,10 @@ app.get('/api/history', function (req, res, next) {
     res.json({
       messages: history.messages,
       historyTokenCount: tokenCounter.sumStoredTokens(history.messages),
-      updatedAt: history.updatedAt
+      updatedAt: history.updatedAt,
+      // What an empty question would replay right now: enough for the page to
+      // say whether the stored conversation still fits in the context budget.
+      context: agent ? agent.planContext(history.messages, '').stats : null
     });
   }).catch(function (err) {
     if (err instanceof StorageError) {
@@ -114,8 +117,12 @@ app.post('/api/ask', function (req, res, next) {
         throw err;
       }).then(function (stored) {
         console.log('Answered in ' + (Date.now() - askedAt.getTime()) + 'ms; '
-          + 'context: ' + result.contextMessageCount + ' past messages, '
-          + 'prompt tokens: ' + (result.usage.promptTokens === null ? 'n/a' : result.usage.promptTokens));
+          + 'context: ' + result.contextMessageCount + ' past messages'
+          + (result.context.trimmedMessages
+            ? ' (' + result.context.trimmedMessages + ' trimmed to fit the '
+              + result.context.budget + '-token budget)'
+            : '')
+          + ', prompt tokens: ' + (result.usage.promptTokens === null ? 'n/a' : result.usage.promptTokens));
 
         res.json({
           request: requestMessage,
@@ -124,6 +131,9 @@ app.post('/api/ask', function (req, res, next) {
           // Context reporting, so the UI can show that memory was really used.
           context: {
             replayedMessages: result.contextMessageCount,
+            trimmedMessages: result.context.trimmedMessages,
+            budget: result.context.budget,
+            estimatedTokens: result.context.estimatedTokens,
             promptTokens: result.usage.promptTokens,
             totalTokens: result.usage.totalTokens,
             model: result.model

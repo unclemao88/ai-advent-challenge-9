@@ -15,8 +15,11 @@
         <span class="header__dot" aria-hidden="true"></span>
         <h1>DeepSeek Agent</h1>
       </div>
-      <p class="header__tokens" id="history-tokens"
-         title="Answers are counted by DeepSeek exactly; questions are estimated locally.">History: 0 tokens</p>
+      <div class="header__meta">
+        <p class="header__tokens" id="history-tokens"
+           title="Answers are counted by DeepSeek exactly; questions are estimated locally.">History: 0 tokens</p>
+        <p class="header__context" id="context-note" hidden></p>
+      </div>
     </header>
 
     <main class="chat" id="chat" tabindex="0" aria-label="Conversation history">

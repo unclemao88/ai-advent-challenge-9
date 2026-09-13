@@ -19,8 +19,15 @@
   var input = document.getElementById('question');
   var submitButton = document.getElementById('submit');
 
-  // The same module the server counts with, so the two never disagree.
+  // The same modules the server uses, so the two never disagree.
   var counter = window.TokenCounter;
+  var budgetRule = window.ContextBudget;
+
+  // Per-message content tokens of the stored conversation, oldest first, plus
+  // the budget parameters the server is using. Together these let the composer
+  // work out what the next request will actually send, as the user types.
+  var historyCosts = [];
+  var contextParams = { budget: 0, systemTokens: 0, overhead: 0 };
 
   // One in-flight request at a time: the guard that makes a double submit
   // (button click, Ctrl+Enter, an impatient second click) a no-op.
@@ -73,16 +80,30 @@
   /** Append a message and reveal the list. */
   function addMessage(message) {
     messagesEl.appendChild(renderBubble(message));
+    historyCosts.push(messageCost(message));
     emptyState.hidden = true;
   }
 
   /** Replace the whole list, e.g. on first load. */
   function renderHistory(messages) {
     messagesEl.textContent = '';
+    historyCosts = [];
     messages.forEach(function (message) {
       messagesEl.appendChild(renderBubble(message));
+      historyCosts.push(messageCost(message));
     });
     emptyState.hidden = messages.length > 0;
+  }
+
+  /**
+   * What one stored message costs as context. The server's count wins where it
+   * has one — it is exact for answers — and the text is estimated otherwise.
+   */
+  function messageCost(message) {
+    var stored = Number(message.tokenCount);
+    return isFinite(stored) && stored >= 0
+      ? Math.round(stored)
+      : counter.estimateTokens(message.content);
   }
 
   /** A placeholder bubble shown while DeepSeek is working. */
@@ -143,11 +164,42 @@
     contextNoteEl.hidden = false;
   }
 
-  /** The unsent question is counted locally, as the user types. */
+  /**
+   * What the next request will cost, counted locally as the user types.
+   *
+   * Not just the typed text: a request carries the system prompt and as much of
+   * the stored conversation as the budget allows, and that is what gets billed.
+   * The same shared rule the server applies decides how much history fits, so
+   * this number is the one that will actually be sent — and it shrinks the
+   * replayed history as the question grows, exactly as the server will.
+   */
   function updateRequestTokens() {
-    var tokens = counter.estimateTokens(input.value);
-    requestTokensEl.textContent = 'Current request: ' + counter.formatCount(tokens) + ' tokens';
+    var questionTokens = counter.estimateTokens(input.value);
+    var plan = budgetRule.plan(historyCosts, {
+      budget: contextParams.budget,
+      systemTokens: contextParams.systemTokens,
+      questionTokens: questionTokens,
+      overhead: contextParams.overhead
+    });
+
+    var text = 'Current request: ' + counter.formatCount(plan.estimatedTokens) + ' tokens';
+    if (plan.historyTokens > 0 || questionTokens > 0) {
+      text += ' (' + counter.formatCount(questionTokens) + ' new + '
+        + counter.formatCount(plan.estimatedTokens - questionTokens) + ' context)';
+    }
+    requestTokensEl.textContent = text;
+
     submitButton.disabled = busy || input.value.trim().length === 0;
+  }
+
+  /** Remember the budget the server is enforcing, so the composer can apply it. */
+  function setContextParams(context) {
+    if (!context) return;
+    contextParams = {
+      budget: Number(context.budget) || 0,
+      systemTokens: Number(context.systemTokens) || 0,
+      overhead: Number(context.overhead) || 0
+    };
   }
 
   /** Scrolls the chat pane only — never the page, which cannot scroll at all. */
@@ -214,7 +266,9 @@
     return requestJson('/api/history').then(function (data) {
       renderHistory(data.messages || []);
       setHistoryTokens(data.historyTokenCount || 0);
+      setContextParams(data.context);
       setContextNote(data.context);
+      updateRequestTokens();
       scrollToBottom();
     }).catch(function (err) {
       showError('Could not load the stored history: ' + err.message);
@@ -238,6 +292,7 @@
       addMessage(data.request);
       addMessage(data.response);
       setHistoryTokens(data.historyTokenCount);
+      setContextParams(data.context);
       setContextNote(data.context);
 
       // Only clear the box once the exchange is safely stored and rendered, so

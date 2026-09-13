@@ -53,11 +53,14 @@ Responsibilities are split so each concern has exactly one home:
 | `src/agent/deepseekAgent.js` | *Everything* DeepSeek: endpoint, key, model, wire format, context building, timeouts, error translation |
 | `src/storage/historyStorage.js` | The JSON file: schema, serialized writes, atomic replace, validation |
 | `src/utils/tokenCounter.js` | Token estimation — shared by the server **and** the browser |
+| `src/utils/contextBudget.js` | The trimming rule: how much history fits a budget — shared by both |
 | `public/` | Rendering, live counters, scrolling, submit handling |
 
-The frontend loads `src/utils/tokenCounter.js` from `/shared/tokenCounter.js`,
-so the "Current request" figure you see while typing is produced by the exact
-same code the server stores counts with. They cannot drift apart.
+The frontend loads `src/utils/tokenCounter.js` and `src/utils/contextBudget.js`
+from `/shared/`, so the "Current request" figure you see while typing is
+produced by the exact same code that counts the stored messages and decides what
+gets sent. Two implementations of either rule would drift, and the number in the
+composer would quietly stop matching the request.
 
 ## Project structure
 
@@ -80,6 +83,7 @@ day8/
 │   │   └── historyStorage.js
 │   └── utils/
 │       ├── tokenCounter.js
+│       ├── contextBudget.js
 │       └── loadEnv.js
 └── public/
     ├── index.html
@@ -230,7 +234,9 @@ an unusable role or empty content are filtered out before sending.
 
 ### The context budget
 
-`planContext()` decides how much of the past goes out, and it is bounded:
+`planContext()` decides how much of the past goes out — delegating the rule
+itself to `src/utils/contextBudget.js`, which the browser loads too — and it is
+bounded:
 **`DEEPSEEK_MAX_CONTEXT_TOKENS`, 20,000 by default.**
 
 Messages are taken newest-first until the budget is spent. The system prompt and
@@ -282,8 +288,16 @@ count, recomputed by the backend after each exchange and returned with
 `GET /api/history` and `POST /api/ask`. The backend is the authority; the
 frontend only displays it.
 
-**In the composer** — `Current request: 12 tokens` — the question you are
-typing, counted locally as you type, using the same shared module.
+**In the composer** — `Current request: 1,240 tokens (12 new + 1,228 context)`
+— what the next request will actually send: the system prompt, the history that
+fits the budget, and the question you are typing. Not just the typed text; a
+request carries its context, and that is what is billed.
+
+The page reaches this number by applying the *same* budget rule the server
+applies, from `src/utils/contextBudget.js`, using each message's stored count
+and the budget parameters the server reports. So it shrinks the replayed history
+as your question grows, exactly as the server will — type a long enough question
+against a tight budget and you can watch the context figure fall to make room.
 
 ### Are the counts exact?
 

@@ -35,12 +35,15 @@ app.disable('x-powered-by');
 app.use(express.json({ limit: '128kb' }));
 app.use(express.static(PUBLIC_DIR));
 
-// The token counter is shared source: the browser loads the very same file the
-// server counts with, so the "Current request" figure and the stored figure can
-// never drift apart. Served explicitly — nothing else under src/ is exposed.
-app.get('/shared/tokenCounter.js', function (req, res) {
-  res.type('application/javascript');
-  res.sendFile(path.join(__dirname, 'utils', 'tokenCounter.js'));
+// Shared source: the browser loads the very same files the server uses, so the
+// "Current request" figure and the request actually sent cannot drift apart —
+// same token counter, same context-budget rule. Served explicitly by name;
+// nothing else under src/ is exposed.
+['tokenCounter', 'contextBudget'].forEach(function (name) {
+  app.get('/shared/' + name + '.js', function (req, res) {
+    res.type('application/javascript');
+    res.sendFile(path.join(__dirname, 'utils', name + '.js'));
+  });
 });
 
 /**
@@ -134,6 +137,10 @@ app.post('/api/ask', function (req, res, next) {
             trimmedMessages: result.context.trimmedMessages,
             budget: result.context.budget,
             estimatedTokens: result.context.estimatedTokens,
+            // The page reapplies the budget rule as the user types; these are
+            // the parameters it needs to get the same answer the server would.
+            systemTokens: result.context.systemTokens,
+            overhead: result.context.overhead,
             promptTokens: result.usage.promptTokens,
             totalTokens: result.usage.totalTokens,
             model: result.model

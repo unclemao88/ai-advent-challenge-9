@@ -5,6 +5,7 @@ const https = require('https');
 const url = require('url');
 
 const tokenCounter = require('../utils/tokenCounter');
+const contextBudget = require('../utils/contextBudget');
 
 const DEFAULT_API_URL = 'https://api.deepseek.com';
 const DEFAULT_MODEL = 'deepseek-chat';
@@ -139,26 +140,15 @@ class DeepSeekAgent {
     const question = String(currentQuestion == null ? '' : currentQuestion);
     const usable = this.selectHistory(history);
 
-    // What the budget must cover besides history: the system prompt and the
-    // question itself. Both are mandatory, so they are reserved up front.
-    const reserved = messageCost(this.systemPrompt) + messageCost(question);
-    const available = this.maxContextTokens > 0
-      ? this.maxContextTokens - reserved
-      : Infinity;
+    // The shared rule decides what fits; this method only supplies the costs.
+    const plan = contextBudget.plan(usable.map(storedContentTokens), {
+      budget: this.maxContextTokens,
+      systemTokens: tokenCounter.estimateTokens(this.systemPrompt),
+      questionTokens: tokenCounter.estimateTokens(question),
+      overhead: tokenCounter.MESSAGE_OVERHEAD_TOKENS
+    });
 
-    // Walk backwards from the newest message, keeping what fits. Stopping at
-    // the first message too large to fit keeps the window contiguous, rather
-    // than reaching past it for older, smaller messages and scrambling the
-    // conversation the model sees.
-    const kept = [];
-    let spent = 0;
-    for (let i = usable.length - 1; i >= 0; i -= 1) {
-      const cost = storedMessageCost(usable[i]);
-      if (spent + cost > available) break;
-      spent += cost;
-      kept.unshift(usable[i]);
-    }
-
+    const kept = plan.includedMessages ? usable.slice(-plan.includedMessages) : [];
     const messages = [{ role: 'system', content: this.systemPrompt }];
     kept.forEach(function (message) {
       messages.push({ role: message.role, content: message.content });
@@ -169,12 +159,16 @@ class DeepSeekAgent {
       messages: messages,
       includedMessages: kept.length,
       stats: {
-        budget: this.maxContextTokens || null,
+        budget: plan.budget,
         // Estimated, because only the answers carry an exact stored count.
-        estimatedTokens: spent + reserved,
-        includedMessages: kept.length,
-        trimmedMessages: usable.length - kept.length,
-        storedMessages: usable.length
+        estimatedTokens: plan.estimatedTokens,
+        historyTokens: plan.historyTokens,
+        includedMessages: plan.includedMessages,
+        trimmedMessages: plan.trimmedMessages,
+        storedMessages: usable.length,
+        // What the page needs to reproduce this walk as the user types.
+        systemTokens: tokenCounter.estimateTokens(this.systemPrompt),
+        overhead: tokenCounter.MESSAGE_OVERHEAD_TOKENS
       }
     };
   }
@@ -314,21 +308,16 @@ function nonNegativeIntSetting(value) {
   return Number.isInteger(n) && n >= 0 ? n : undefined;
 }
 
-/** Tokens a piece of text costs as a chat message, framing included. */
-function messageCost(text) {
-  return tokenCounter.estimateTokens(text) + tokenCounter.MESSAGE_OVERHEAD_TOKENS;
-}
-
 /**
- * Cost of a stored message. Prefers the count already on the record — exact for
- * answers, since it came from DeepSeek — and estimates only when absent.
+ * Content tokens of a stored message. Prefers the count already on the record —
+ * exact for answers, since it came from DeepSeek — and estimates only when
+ * absent. Framing overhead is added by the budget rule, not here.
  */
-function storedMessageCost(message) {
+function storedContentTokens(message) {
   const stored = Number(message.tokenCount);
-  const content = Number.isFinite(stored) && stored >= 0
+  return Number.isFinite(stored) && stored >= 0
     ? Math.round(stored)
     : tokenCounter.estimateTokens(message.content);
-  return content + tokenCounter.MESSAGE_OVERHEAD_TOKENS;
 }
 
 function positiveInt(value) {

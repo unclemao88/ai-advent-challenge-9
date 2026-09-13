@@ -31,7 +31,7 @@
 
     <footer class="composer">
       <div class="composer__status">
-        <span id="request-tokens">Current request: 0 tokens</span>
+        <span id="request-tokens" title="What the next request will send: the system prompt, the replayed history, and your question.">Current request: 0 tokens</span>
         <span class="composer__hint">Ctrl/Cmd + Enter to send</span>
       </div>
 
@@ -52,8 +52,9 @@
 
   </div>
 
-  <!-- The same counter the server uses, served from src/utils/tokenCounter.js. -->
+  <!-- The same counter and budget rule the server uses, from src/utils/. -->
   <script src="/shared/tokenCounter.js"></script>
+  <script src="/shared/contextBudget.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

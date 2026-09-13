@@ -57,7 +57,7 @@ service manager can supply the key instead.
 | `PORT` | no | `3000` | Port to listen on. |
 | `HOST` | no | `127.0.0.1` | Interface to bind. Loopback only by default. |
 | `DATA_DIR` | no | `./data` | Where `chat-history.json` lives. A packaged install points this at a writable state directory. |
-| `DEEPSEEK_API_URL` | no | `https://api.deepseek.com/chat/completions` | Override for a proxy or a compatible endpoint. |
+| `DEEPSEEK_API_URL` | no | `https://api.deepseek.com/chat/completions` | Override for a proxy or a compatible endpoint. A base URL (`https://api.deepseek.com`, with or without `/v1`) is completed to the chat-completions path. |
 | `DEEPSEEK_TIMEOUT_MS` | no | `60000` | Hard limit on one DeepSeek exchange. |
 | `DEEPSEEK_HISTORY_LIMIT` | no | `0` (all) | Replay only the last N stored messages. |
 
@@ -161,6 +161,8 @@ deepseek-agent/
 │   ├── index.html
 │   ├── style.css
 │   └── app.js               the UI and the calls to this server
+├── test/
+│   └── agent.test.js        the agent against a stub endpoint (no key needed)
 └── README.md
 ```
 
@@ -205,6 +207,16 @@ DEEPSEEK_MODEL=deepseek-reasoner
 ```
 
 The model name is read once, in `createAgent()`, and appears nowhere else.
+
+## Tests
+
+    npm test
+
+Runs the agent against a local stub endpoint — no API key, no network, no
+cost. It covers the request shape (bearer token, replayed history, model,
+`stream: false`), every error the user can act on (401, 402, 404, 429, 5xx,
+HTML error pages, empty answers, timeouts) and the endpoint normalisation
+below.
 
 ## Deploying on Debian behind nginx
 
@@ -294,7 +306,7 @@ Edit `server_name` in `deploy/nginx.conf`, then:
 The startup lines name the model and the history file, which is the quickest way
 to confirm what a box is actually running and where its memory is:
 
-    Agent: DeepSeek (deepseek-chat)
+    Agent: DeepSeek (deepseek-chat) at https://api.deepseek.com/chat/completions
     History: /var/lib/deepseek-agent/chat-history.json
     Listening on http://127.0.0.1:3000
 
@@ -311,6 +323,8 @@ alone, so the agent keeps its memory across upgrades. To wipe the conversation:
 |---|---|---|
 | `The agent is not configured on the server` | `DEEPSEEK_API_KEY` unset or unreadable | `sudo chown root:deepseek-agent /etc/deepseek-agent.env && sudo chmod 640 /etc/deepseek-agent.env` |
 | `DeepSeek rejected the API key` | Wrong or revoked key | New key at platform.deepseek.com |
+| `No DeepSeek endpoint at … (HTTP 404)` | `DEEPSEEK_API_URL` points somewhere with no chat-completions endpoint | Unset it to use the default, or give the full URL. The startup line prints the endpoint in use. |
+| `returned a response that is not JSON` | Something other than the API answered — a proxy, a captive portal, or hijacked DNS | `curl -sS -o /dev/null -w '%{http_code}\n' https://api.deepseek.com/chat/completions` from the same host |
 | `status=217/USER` | The `deepseek-agent` user does not exist | Step 2; confirm with `id deepseek-agent` |
 | `Cannot find module 'express'` | `node_modules` was not deployed | Run `npm ci --omit=dev` before the rsync in step 3 |
 | `Could not open the history file: EROFS/EACCES` | `DATA_DIR` points inside the read-only tree | Keep `StateDirectory=` and `DATA_DIR=/var/lib/deepseek-agent` as shipped |

@@ -48,15 +48,19 @@ class DeepSeekAgent {
     }
     this.apiKey = opts.apiKey;
     this.model = opts.model || DEFAULT_MODEL;
-    this.apiUrl = opts.apiUrl || DEFAULT_API_URL;
+    this.apiUrl = normalizeApiUrl(opts.apiUrl) || DEFAULT_API_URL;
     this.timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
     // 0 means "replay the whole conversation", which is the default.
     this.historyLimit = opts.historyLimit || 0;
   }
 
-  /** Short label for the startup log and the page footer. Never includes the key. */
+  /**
+   * Short label for the startup log. Names the endpoint as well as the model,
+   * because a misconfigured DEEPSEEK_API_URL is otherwise invisible until the
+   * first question fails. Never includes the key.
+   */
   describe() {
-    return 'DeepSeek (' + this.model + ')';
+    return 'DeepSeek (' + this.model + ') at ' + this.apiUrl;
   }
 
   /**
@@ -142,13 +146,18 @@ class DeepSeekAgent {
           let parsed = null;
           try {
             parsed = JSON.parse(data);
-          } catch (e) {
-            // A proxy or captive portal in front of the API, or a 5xx HTML page.
+          } catch (e) { /* handled below; a failure is often not JSON at all */ }
+
+          // Status first. An error page from a proxy, or a 404 from a wrong
+          // path, has no JSON body to read, and saying so is far less useful
+          // than naming the status and what usually causes it.
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            return fail(httpError(res.statusCode, parsed, self.apiUrl));
+          }
+          if (!parsed) {
+            // A proxy or captive portal in front of the API answering 200.
             return fail(new AgentError(
               'DeepSeek returned a response that is not JSON (HTTP ' + res.statusCode + ').'));
-          }
-          if (res.statusCode < 200 || res.statusCode >= 300) {
-            return fail(httpError(res.statusCode, parsed));
           }
           done(parsed);
         });
@@ -196,13 +205,42 @@ function positiveInt(value) {
   return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
+/**
+ * DEEPSEEK_API_URL is commonly set to the base URL an SDK would take
+ * ("https://api.deepseek.com", with or without /v1), because that is what the
+ * docs print. Posting there gets a bare 404, so accept both spellings and
+ * append the path when only a host was given.
+ */
+function normalizeApiUrl(value) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return null;
+
+  const parsed = url.parse(raw);
+  if (!parsed.protocol || !parsed.hostname) {
+    throw new Error('DEEPSEEK_API_URL is not a valid URL: ' + raw);
+  }
+  const path = (parsed.pathname || '/').replace(/\/+$/, '');
+  if (path === '' || path === '/v1' || path === '/beta') {
+    return parsed.protocol + '//' + parsed.host + path + '/chat/completions';
+  }
+  return raw.replace(/\/+$/, '');
+}
+
 function humanDuration(ms) {
   return ms < 1000 ? ms + 'ms' : Math.round(ms / 1000) + 's';
 }
 
 /** Map an HTTP failure onto something a user can act on, leaking no internals. */
-function httpError(status, parsed) {
+function httpError(status, parsed, apiUrl) {
   const detail = parsed && parsed.error && parsed.error.message ? parsed.error.message : null;
+  if (status === 404) {
+    // The host answered but nothing is served at that path, so the body is a
+    // bare 404 rather than an API error. Name the URL — it is the setting at
+    // fault, and it carries no credential.
+    return new AgentError(
+      'No DeepSeek endpoint at ' + apiUrl + ' (HTTP 404). Check DEEPSEEK_API_URL — ' +
+      'it must be the full chat-completions URL, e.g. ' + DEFAULT_API_URL + '.', 502);
+  }
   if (status === 401) {
     return new AgentError('DeepSeek rejected the API key. Check DEEPSEEK_API_KEY.', 502);
   }

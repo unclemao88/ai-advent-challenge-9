@@ -8,7 +8,8 @@ const base = require('./agent');
 const Agent = base.Agent;
 const AgentError = base.AgentError;
 
-const DEFAULT_API_URL = 'https://api.deepseek.com/chat/completions';
+const DEFAULT_API_URL = 'https://api.deepseek.com';
+const CHAT_PATH = '/chat/completions';
 const DEFAULT_MODEL = 'deepseek-chat';
 const DEFAULT_TIMEOUT_MS = 60000;
 
@@ -32,7 +33,7 @@ class DeepSeekAgent extends Agent {
     }
     this.apiKey = opts.apiKey;
     this.model = opts.model || DEFAULT_MODEL;
-    this.apiUrl = opts.apiUrl || DEFAULT_API_URL;
+    this.apiUrl = resolveEndpoint(opts.apiUrl || DEFAULT_API_URL);
     this.timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
     this.systemPrompt = opts.systemPrompt || null;
   }
@@ -105,12 +106,15 @@ class DeepSeekAgent extends Agent {
           try {
             parsed = JSON.parse(data);
           } catch (e) {
-            // A proxy or captive portal in front of the API, or a 5xx HTML page.
-            return fail(new AgentError(
-              'DeepSeek returned a response that is not JSON (HTTP ' + res.statusCode + ').'));
+            parsed = null; // Error pages are often HTML; the status still tells us plenty.
           }
           if (res.statusCode < 200 || res.statusCode >= 300) {
-            return fail(httpError(res.statusCode, parsed));
+            return fail(httpError(res.statusCode, parsed, self.apiUrl));
+          }
+          if (parsed === null) {
+            // A proxy or captive portal in front of the API.
+            return fail(new AgentError(
+              'DeepSeek returned a response that is not JSON, from ' + self.apiUrl + '.'));
           }
           done(parsed);
         });
@@ -136,12 +140,23 @@ class DeepSeekAgent extends Agent {
   }
 }
 
+/**
+ * Accept either the base URL or the full endpoint, because every app in this
+ * repo spells DEEPSEEK_API_URL differently and a bare base URL otherwise posts
+ * to "/" and comes back as a mystifying 404.
+ */
+function resolveEndpoint(apiUrl) {
+  const trimmed = String(apiUrl).trim().replace(/\/+$/, '');
+  if (!trimmed) return DEFAULT_API_URL + CHAT_PATH;
+  return /\/chat\/completions$/.test(trimmed) ? trimmed : trimmed + CHAT_PATH;
+}
+
 function humanDuration(ms) {
   return ms < 1000 ? ms + 'ms' : Math.round(ms / 1000) + 's';
 }
 
 /** Map an HTTP failure onto something a user can act on. */
-function httpError(status, parsed) {
+function httpError(status, parsed, endpoint) {
   const detail = parsed && parsed.error && parsed.error.message ? parsed.error.message : null;
   if (status === 401) {
     return new AgentError('DeepSeek rejected the API key. Check DEEPSEEK_API_KEY.', 502);
@@ -151,6 +166,10 @@ function httpError(status, parsed) {
   }
   if (status === 429) {
     return new AgentError('DeepSeek is rate limiting this key. Please retry in a moment.', 429);
+  }
+  if (status === 404) {
+    // Almost always a wrong DEEPSEEK_API_URL rather than a DeepSeek outage.
+    return new AgentError('No DeepSeek endpoint at ' + endpoint + ' (HTTP 404). Check DEEPSEEK_API_URL.', 502);
   }
   if (status >= 500) {
     return new AgentError('DeepSeek is unavailable right now (HTTP ' + status + '). Please try again.', 502);
@@ -171,4 +190,4 @@ function parseAnswer(parsed) {
   return content;
 }
 
-module.exports = { DeepSeekAgent: DeepSeekAgent };
+module.exports = { DeepSeekAgent: DeepSeekAgent, resolveEndpoint: resolveEndpoint };

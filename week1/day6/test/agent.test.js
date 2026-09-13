@@ -11,6 +11,7 @@ const http = require('http');
 const createAgent = require('../agent').createAgent;
 const AgentError = require('../agent').AgentError;
 const DeepSeekAgent = require('../agent').DeepSeekAgent;
+const resolveEndpoint = require('../agent/deepseek-agent').resolveEndpoint;
 
 let passed = 0;
 const tests = [];
@@ -105,10 +106,23 @@ test('maps a 429 to status 429', async function () {
   } finally { s.close(); }
 });
 
-test('reports non-JSON responses instead of throwing a parse error', async function () {
+test('an HTML error page is reported by its status, not its content type', async function () {
   const s = await stub(function (req, res) {
     res.writeHead(502, { 'Content-Type': 'text/html' });
     res.end('<html>gateway</html>');
+  });
+  try {
+    const agent = new DeepSeekAgent({ apiKey: 'k', apiUrl: s.url });
+    await assert.rejects(agent.ask('hi'), function (err) {
+      return err instanceof AgentError && /unavailable/.test(err.message);
+    });
+  } finally { s.close(); }
+});
+
+test('reports a non-JSON 200 instead of throwing a parse error', async function () {
+  const s = await stub(function (req, res) {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<html>captive portal</html>');
   });
   try {
     const agent = new DeepSeekAgent({ apiKey: 'k', apiUrl: s.url });
@@ -136,6 +150,42 @@ test('times out a slow provider', async function () {
     const agent = new DeepSeekAgent({ apiKey: 'k', apiUrl: s.url, timeoutMs: 150 });
     await assert.rejects(agent.ask('hi'), function (err) {
       return err instanceof AgentError && err.status === 504 && /did not answer/.test(err.message);
+    });
+  } finally { s.close(); }
+});
+
+test('accepts DEEPSEEK_API_URL as a base URL or a full endpoint', async function () {
+  // day8 onwards ship the base form in .env; day6/day7 wanted the full path.
+  // Posting a base URL used to hit "/" and come back as an opaque 404.
+  const full = 'https://api.deepseek.com/chat/completions';
+  assert.strictEqual(resolveEndpoint('https://api.deepseek.com'), full);
+  assert.strictEqual(resolveEndpoint('https://api.deepseek.com/'), full);
+  assert.strictEqual(resolveEndpoint(full), full);
+  assert.strictEqual(resolveEndpoint(full + '/'), full);
+  assert.strictEqual(resolveEndpoint('  https://api.deepseek.com  '), full);
+  assert.strictEqual(resolveEndpoint('https://gw.example.com/v1'), 'https://gw.example.com/v1/chat/completions');
+
+  // The base form must reach the real path, not "/".
+  let seenPath = null;
+  const s = await stub(function (req, res) { seenPath = req.path; reply(res, 200, completion('ok')); });
+  try {
+    const origin = s.url.replace('/chat/completions', '');
+    const agent = new DeepSeekAgent({ apiKey: 'k', apiUrl: origin });
+    assert.strictEqual(await agent.ask('hi'), 'ok');
+    assert.strictEqual(seenPath, '/chat/completions');
+  } finally { s.close(); }
+});
+
+test('a 404 names the URL as the suspect instead of blaming JSON', async function () {
+  const s = await stub(function (req, res) {
+    res.writeHead(404, { 'Content-Type': 'text/html' });
+    res.end('<html>404 page not found</html>');
+  });
+  try {
+    const agent = new DeepSeekAgent({ apiKey: 'k', apiUrl: s.url });
+    await assert.rejects(agent.ask('hi'), function (err) {
+      assert.ok(/DEEPSEEK_API_URL/.test(err.message), err.message);
+      return true;
     });
   } finally { s.close(); }
 });

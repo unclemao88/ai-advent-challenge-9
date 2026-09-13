@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>DeepSeek Agent</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="shared/tokenService.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1 class="header__title">DeepSeek Agent</h1>
+      <dl class="stats" aria-label="Token statistics">
+        <div class="stat" title="Tokens of your last question (local estimate: DeepSeek reports tokens for the whole prompt, not per message)">
+          <dt>Current request</dt><dd id="stat-request">—</dd>
+        </div>
+        <div class="stat" title="Tokens of the last answer (completion_tokens reported by DeepSeek)">
+          <dt>Current response</dt><dd id="stat-response">—</dd>
+        </div>
+        <div class="stat" title="Prompt tokens of the last request: system prompt, facts, history and question (prompt_tokens reported by DeepSeek)">
+          <dt>Context sent to model</dt><dd id="stat-context">—</dd>
+        </div>
+        <div class="stat" title="Sum of the token counts of every stored message, in all branches">
+          <dt>Whole history</dt><dd id="stat-history">—</dd>
+        </div>
+        <div class="stat" title="Estimated prompt size of the next request, including what you are typing">
+          <dt>Next context</dt><dd id="stat-next">—</dd>
+        </div>
+      </dl>
+    </header>
+
+    <section class="controls" aria-label="Context management">
+      <div class="controls__row">
+        <label class="controls__label" for="mode">Context management:</label>
+        <select id="mode" class="select">
+          <option value="sliding-window">Sliding window</option>
+          <option value="sticky-facts">Sticky facts (Key-value memory)</option>
+          <option value="branching">Branching</option>
+        </select>
+
+        <div id="panel-sliding" class="mode-panel">
+          <label for="sliding-n">Number of messages:</label>
+          <input id="sliding-n" class="number" type="number" inputmode="numeric" min="1" max="500" step="1">
+        </div>
+        <div id="panel-sticky" class="mode-panel" hidden>
+          <label for="sticky-n">Keep latest messages:</label>
+          <input id="sticky-n" class="number" type="number" inputmode="numeric" min="1" max="500" step="1">
+        </div>
+        <div id="panel-branching" class="mode-panel" hidden>
+          <span id="branch-summary" class="muted"></span>
+        </div>
+      </div>
+      <p id="settings-error" class="inline-error" role="alert" hidden></p>
+      <p id="context-summary" class="context-summary"></p>
+
+      <details id="facts-panel" class="facts" hidden>
+        <summary>Sticky facts <span id="facts-count" class="muted"></span> <span id="facts-toggle" class="facts__toggle">show</span></summary>
+        <p id="facts-meta" class="facts__meta muted"></p>
+        <p id="facts-empty" class="muted">No facts yet. Facts are extracted when messages fall outside the latest N.</p>
+        <div class="facts__table-wrap">
+          <table class="facts__table">
+            <thead><tr><th scope="col">Key</th><th scope="col">Value</th><th scope="col">Updated</th></tr></thead>
+            <tbody id="facts-body"></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+
+    <div id="notices" class="notices" hidden></div>
+
+    <main id="chat" class="chat" aria-label="Chat history" aria-live="polite" tabindex="0">
+      <p class="chat__heading">Chat history</p>
+      <p id="empty" class="chat__empty">No messages yet. Ask your first question below.</p>
+      <div id="messages" class="messages"></div>
+    </main>
+
+    <form id="composer" class="composer" novalidate>
+      <div id="error" class="alert" role="alert" hidden></div>
+      <label for="question" class="visually-hidden">Ask your question, master</label>
+      <textarea id="question" class="composer__input" rows="2" placeholder="ask your question, master" autocomplete="off"></textarea>
+      <div class="composer__row">
+        <span id="question-tokens" class="muted composer__hint">Enter to send · Shift+Enter for a new line</span>
+        <span id="working" class="working" hidden><span class="working__dot" aria-hidden="true"></span><span id="working-text">agent is working…</span></span>
+        <button id="ask" class="button button--primary" type="submit">ask</button>
+      </div>
+      <div id="branch-controls" class="branch-controls" hidden>
+        <button id="enable-checkpoint" class="button" type="button">Enable checkpoint</button>
+        <span id="branch-active" class="branch-active" hidden></span>
+        <button id="switch-branch" class="button" type="button" hidden>Switch to another branch</button>
+        <button id="delete-checkpoint" class="button button--danger" type="button" hidden>Delete checkpoint</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="delete-dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-title" hidden>
+    <form id="delete-form" class="modal__box">
+      <h2 id="delete-title" class="modal__title">Delete checkpoint</h2>
+      <fieldset class="modal__fieldset">
+        <legend>Select branch to remove:</legend>
+        <div id="delete-options"></div>
+      </fieldset>
+      <p class="muted modal__note">The selected branch and its messages are deleted permanently. The other branch is kept and becomes the normal conversation.</p>
+      <div class="modal__actions">
+        <button id="delete-cancel" class="button" type="button">Cancel</button>
+        <button id="delete-confirm" class="button button--danger" type="submit" disabled>Delete selected branch</button>
+      </div>
+    </form>
+  </div>
+</body>
+</html>

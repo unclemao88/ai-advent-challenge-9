@@ -1,0 +1,97 @@
+# systemd unit for the day 10 DeepSeek Agent — Debian 12 (bookworm) / 13 (trixie).
+#
+#   Code:        /opt/deepseek-app-day10            (read-only for the service)
+#   State:       /var/lib/deepseek-app-day10        (state.json)
+#   Secrets:     /etc/deepseek-app.env              (root:deepseek-app, 0640)
+#   Account:     deepseek-app:deepseek-app          (deploy/deepseek-app.sysusers.conf)
+#   Listens on:  127.0.0.1:3009                     (put nginx in front: deploy/nginx.conf)
+#
+# Install steps: README.md → "Running on Debian with systemd".
+
+[Unit]
+Description=DeepSeek Agent (day 10) — chat with sliding window, sticky facts and branching
+Documentation=https://api-docs.deepseek.com/
+# network-online, not just network: every answer needs outbound DNS + TLS.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=deepseek-app
+Group=deepseek-app
+
+WorkingDirectory=/opt/deepseek-app-day10
+# Check with `command -v node` — Debian's nodejs package and NodeSource both use /usr/bin/node.
+ExecStart=/usr/bin/node /opt/deepseek-app-day10/src/server/server.js
+
+Environment=NODE_ENV=production
+Environment=PORT=3009
+# Local only: there is no authentication. To expose the port directly instead of
+# via nginx, set HOST=0.0.0.0 (see the note on EnvironmentFile below).
+Environment=HOST=127.0.0.1
+
+# The conversation is the agent's memory, so it must outlive redeploys of /opt.
+# systemd creates /var/lib/deepseek-app-day10 owned by the service account (0700)
+# and keeps it writable under ProtectSystem=strict.
+StateDirectory=deepseek-app-day10
+StateDirectoryMode=0700
+Environment=DATA_DIR=/var/lib/deepseek-app-day10
+
+# libuv uses io_uring for file I/O on recent kernels, and @system-service below
+# excludes those syscalls. This app writes state.json on every turn, so turn it off.
+Environment=UV_USE_IO_URING=0
+
+# DEEPSEEK_API_KEY=... (optionally DEEPSEEK_MODEL, DEEPSEEK_TIMEOUT_MS,
+# CONTEXT_LIMIT_TOKENS, MAX_OUTPUT_TOKENS). Kept out of this unit so the key
+# never shows in `systemctl cat`.
+# NOTE: variables from this file OVERRIDE the Environment= lines above, and the
+# file is shared with the other deepseek-app units (day 9 uses port 3008) —
+# do not put PORT or DATA_DIR in it.
+EnvironmentFile=/etc/deepseek-app.env
+
+Restart=on-failure
+RestartSec=5
+# The server stops accepting connections on SIGTERM and lets open requests
+# finish (it gives up after 15s). state.json is written atomically either way.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deepseek-app-day10
+
+# --- Hardening --------------------------------------------------------------
+# Questions and answers are personal data: files are created 0600.
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=
+# AF_NETLINK is required: glibc's getaddrinfo() enumerates local interfaces over
+# netlink, and without it DNS for api.deepseek.com fails.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# Return EPERM for a syscall outside the filter instead of killing node with
+# SIGSYS ("code=killed, signal=SYS"), so libuv can take its fallback path.
+SystemCallErrorNumber=EPERM
+# The code, including node_modules, is read-only; only StateDirectory is writable.
+ReadOnlyPaths=/opt/deepseek-app-day10
+
+# Deliberately NOT set: MemoryDenyWriteExecute=true — V8's JIT needs W+X memory
+# and node will not start with it.
+
+[Install]
+WantedBy=multi-user.target

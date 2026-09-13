@@ -1,0 +1,18 @@
+{
+  "name": "deepseek-agent-day10",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DeepSeek Agent: local chat agent with persistent JSON history and three context-management modes (sliding window, sticky facts, branching)",
+  "main": "src/server/server.js",
+  "scripts": {
+    "start": "node src/server/server.js",
+    "test": "node test/run.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "engines": {
+    "node": ">=10"
+  },
+  "license": "MIT"
+}

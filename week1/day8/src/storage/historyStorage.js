@@ -20,6 +20,29 @@ const ROLE_LABELS = {
 };
 
 /**
+ * A storage failure with a message that is safe, and useful, to show the user.
+ * The underlying error is kept on `cause` for the server log only — the browser
+ * sees the sentence, never the stack or the errno.
+ */
+class StorageError extends Error {
+  constructor(message, cause) {
+    super(message);
+    this.name = 'StorageError';
+    this.cause = cause;
+  }
+}
+
+/** Turn an fs errno into the reason a person can act on. */
+function describeFsError(err) {
+  const code = err && err.code;
+  if (code === 'EACCES' || code === 'EPERM') return 'permission denied';
+  if (code === 'ENOSPC') return 'the disk is full';
+  if (code === 'EROFS') return 'the filesystem is read-only';
+  if (code === 'EMFILE' || code === 'ENFILE') return 'too many open files';
+  return code ? 'filesystem error ' + code : 'unknown filesystem error';
+}
+
+/**
  * Every write is queued behind the previous one. Two requests finishing at the
  * same instant therefore read-modify-write in sequence instead of racing, so
  * neither can drop the other's messages. This is the mutex for the file.
@@ -69,7 +92,11 @@ function createMessage(role, content, options) {
  * @returns {Promise<{version: number, createdAt: string, updatedAt: string, messages: object[]}>}
  */
 function loadHistory() {
-  return readFile(HISTORY_FILE).then(function (raw) {
+  return readFile(HISTORY_FILE).catch(function (err) {
+    throw new StorageError(
+      'Could not read the stored conversation (' + RELATIVE_NAME + '): '
+      + describeFsError(err) + '.', err);
+  }).then(function (raw) {
     if (raw === null) return emptyHistory();
     if (!raw.trim()) return emptyHistory(); // Zero-length file from an interrupted first run.
 
@@ -77,10 +104,14 @@ function loadHistory() {
     try {
       parsed = JSON.parse(raw);
     } catch (err) {
-      throw new Error(RELATIVE_NAME + ' is not valid JSON: ' + err.message);
+      throw new StorageError(
+        'The stored conversation (' + RELATIVE_NAME + ') is not valid JSON, so it cannot be '
+        + 'read or added to. Fix the file, or move it aside to start a new conversation.', err);
     }
     if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.messages)) {
-      throw new Error(RELATIVE_NAME + ' has no "messages" array.');
+      throw new StorageError(
+        'The stored conversation (' + RELATIVE_NAME + ') has no "messages" array, so it cannot be '
+        + 'read or added to. Fix the file, or move it aside to start a new conversation.', null);
     }
 
     return {
@@ -213,7 +244,10 @@ function writeAtomic(history) {
     return rename(tmp, HISTORY_FILE);
   }).catch(function (err) {
     fs.unlink(tmp, function () {}); // Best effort; never mask the real error.
-    throw err;
+    if (err instanceof StorageError) throw err;
+    throw new StorageError(
+      'Could not save to the conversation file (' + RELATIVE_NAME + '): '
+      + describeFsError(err) + '. The previous history is unchanged.', err);
   });
 }
 
@@ -254,6 +288,7 @@ function mkdirp(dir) {
 
 module.exports = {
   SCHEMA_VERSION: SCHEMA_VERSION,
+  StorageError: StorageError,
   HISTORY_FILE: HISTORY_FILE,
   RELATIVE_NAME: RELATIVE_NAME,
   ROLE_LABELS: ROLE_LABELS,

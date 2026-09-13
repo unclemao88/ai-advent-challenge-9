@@ -145,7 +145,9 @@ instead of failing obscurely on the first question.
 All messages live in `data/history.json`, created automatically on first start.
 
 - **Loaded at startup.** A corrupt file is reported and the server exits rather
-  than starting with a blank memory and overwriting your conversation.
+  than starting with a blank memory and overwriting your conversation. If the
+  file becomes unreadable *while* the server runs, requests fail with a message
+  naming the file and what to do about it — not a generic error.
 - **Loaded by the browser** on every page load via `GET /api/history`, so a
   refresh restores the whole conversation.
 - **Written atomically.** Each save writes a uniquely named `.tmp` file in the
@@ -155,6 +157,10 @@ All messages live in `data/history.json`, created automatically on first start.
   one, so simultaneous requests read-modify-write in sequence instead of racing.
   (Verified with eight concurrent requests: all sixteen messages stored, file
   still valid.)
+- **A save failure is never silent.** If DeepSeek answers but the history
+  cannot be written, the response says exactly that — the call was made, the
+  reply is lost, and the stored conversation is unchanged. The answer is not
+  shown as a bubble it cannot back up with a stored record.
 - **Saved as a pair, after the call succeeds.** The question and the answer are
   appended in a single write once DeepSeek has replied. A failed call therefore
   never leaves a question stranded with no answer under it, and never fabricates
@@ -298,7 +304,7 @@ Status codes:
 | `400` | Empty question, or an unparseable JSON body. |
 | `413` | Question longer than 8000 characters. |
 | `429` | DeepSeek is rate limiting the key. |
-| `500` | Unexpected server fault (details logged, not returned). |
+| `500` | Unexpected server fault, or the history file could not be read or written. Storage failures return a sentence naming `data/history.json` and the cause (permission denied, disk full, invalid JSON); the errno and stack stay in the server log. |
 | `502` | DeepSeek rejected the request, was unreachable, or replied with nonsense. |
 | `503` | No `DEEPSEEK_API_KEY` configured. |
 | `504` | DeepSeek did not answer within the timeout. |
@@ -322,7 +328,10 @@ Errors always come back as `{ "error": "one readable sentence" }`.
   wrapped with `white-space: pre-wrap`; nothing in the UI uses `innerHTML`. A
   question containing `<script>` is displayed as text. (Verified.)
 - **No stack traces in responses.** Unexpected failures are logged in full on
-  the server and returned as one generic sentence.
+  the server and returned as one generic sentence. Storage failures are the one
+  case that returns detail — the filename and the cause — because it is a local
+  application and the user is the person who can fix it. No errno, path outside
+  the project, or stack ever leaves the process.
 - **Local by default.** The server binds `127.0.0.1`; override with `HOST` only
   if you understand the consequences — there is no authentication.
 

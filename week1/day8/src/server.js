@@ -10,6 +10,7 @@ const storage = require('./storage/historyStorage');
 const tokenCounter = require('./utils/tokenCounter');
 const agentModule = require('./agent/deepseekAgent');
 const AgentError = agentModule.AgentError;
+const StorageError = storage.StorageError;
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -53,7 +54,13 @@ app.get('/api/history', function (req, res, next) {
       historyTokenCount: tokenCounter.sumStoredTokens(history.messages),
       updatedAt: history.updatedAt
     });
-  }).catch(next);
+  }).catch(function (err) {
+    if (err instanceof StorageError) {
+      console.error('Storage error on GET /api/history: ' + err.message, err.cause || '');
+      return res.status(500).json({ error: err.message });
+    }
+    next(err);
+  });
 });
 
 /**
@@ -96,7 +103,16 @@ app.post('/api/ask', function (req, res, next) {
         tokenSource: 'api'
       });
 
-      return storage.appendMessages([requestMessage, responseMessage]).then(function (stored) {
+      return storage.appendMessages([requestMessage, responseMessage]).catch(function (err) {
+        // The answer exists but could not be persisted. Say exactly that: the
+        // call was made and paid for, and the reply is lost — a generic
+        // "something went wrong" would hide both facts.
+        if (err instanceof StorageError) {
+          throw new StorageError('DeepSeek answered, but the conversation could not be saved. '
+            + err.message, err.cause);
+        }
+        throw err;
+      }).then(function (stored) {
         console.log('Answered in ' + (Date.now() - askedAt.getTime()) + 'ms; '
           + 'context: ' + result.contextMessageCount + ' past messages, '
           + 'prompt tokens: ' + (result.usage.promptTokens === null ? 'n/a' : result.usage.promptTokens));
@@ -119,6 +135,12 @@ app.post('/api/ask', function (req, res, next) {
     if (err instanceof AgentError) {
       console.error('Agent error (' + err.status + '): ' + err.message);
       return res.status(err.status).json({ error: err.message });
+    }
+    if (err instanceof StorageError) {
+      // The stored conversation is unusable. The message names the file and
+      // what to do about it; the underlying errno stays in the server log.
+      console.error('Storage error on POST /api/ask: ' + err.message, err.cause || '');
+      return res.status(500).json({ error: err.message });
     }
     next(err);
   });

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>DeepSeek Agent</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🧠</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app" id="app">
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand__dot" aria-hidden="true"></span>
+        <h1>DeepSeek Agent</h1>
+        <span class="brand__model" id="model"></span>
+      </div>
+      <div class="topbar__actions">
+        <span class="confirm" id="clear-confirm" hidden>
+          <span>Delete the whole conversation?</span>
+          <button type="button" class="btn btn--danger" id="clear-yes">yes, clear</button>
+          <button type="button" class="btn btn--ghost" id="clear-no">cancel</button>
+        </span>
+        <button type="button" class="btn btn--ghost" id="clear">clear history</button>
+        <button type="button" class="btn btn--ghost stats-toggle" id="stats-toggle"
+                aria-controls="stats" aria-expanded="false">tokens</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <main class="chat" id="chat" aria-label="Conversation">
+        <div class="chat__inner">
+          <div class="notices" id="notices" role="status" hidden></div>
+
+          <section class="summary" aria-labelledby="summary-title">
+            <div class="section-head">
+              <h2 id="summary-title">Historical summary</h2>
+              <span class="section-head__meta" id="summary-meta"></span>
+            </div>
+            <p class="summary__note" id="summary-note"></p>
+            <div class="summary__body markdown" id="summary-body" hidden></div>
+            <div class="summary__foot" id="summary-foot" hidden>
+              <span id="summary-tokens"></span>
+              <span id="summary-covered"></span>
+            </div>
+            <p class="summary__pending" id="summary-pending" hidden></p>
+          </section>
+
+          <section class="recent" aria-labelledby="recent-title">
+            <div class="section-head">
+              <h2 id="recent-title">Recent full history</h2>
+              <span class="section-head__meta" id="recent-meta"></span>
+            </div>
+            <div class="messages" id="messages" role="log" aria-live="polite"></div>
+            <p class="empty" id="empty" hidden>No messages yet. Ask something — it will be remembered.</p>
+          </section>
+        </div>
+      </main>
+
+      <aside class="stats" id="stats" aria-label="Token and memory information">
+        <section class="stats__group">
+          <h2>Memory</h2>
+          <dl>
+            <div class="stat"><dt>Historical summary</dt><dd id="stat-summary">—</dd></div>
+            <div class="stat"><dt>Recent full history</dt><dd id="stat-history">—</dd></div>
+            <div class="stat stat--total"><dt>Total history</dt><dd id="stat-total">—</dd></div>
+          </dl>
+          <p class="stats__hint" id="stat-messages"></p>
+        </section>
+
+        <section class="stats__group">
+          <h2>Current request</h2>
+          <dl>
+            <div class="stat"><dt>Question</dt><dd id="stat-request">—</dd></div>
+          </dl>
+          <p class="stats__hint">The question alone, counted locally.</p>
+        </section>
+
+        <section class="stats__group">
+          <h2>Last API call</h2>
+          <dl>
+            <div class="stat"><dt>Input</dt><dd id="stat-input">—</dd></div>
+            <div class="stat"><dt>Output</dt><dd id="stat-output">—</dd></div>
+            <div class="stat stat--total"><dt>Total</dt><dd id="stat-api-total">—</dd></div>
+          </dl>
+          <p class="stats__hint" id="stat-api-note">Input is the whole context: instructions, summary, recent messages and the question.</p>
+        </section>
+
+        <section class="stats__group">
+          <h2>Last summary update</h2>
+          <dl>
+            <div class="stat"><dt>Input</dt><dd id="stat-sum-input">—</dd></div>
+            <div class="stat"><dt>Output</dt><dd id="stat-sum-output">—</dd></div>
+            <div class="stat stat--total"><dt>Total</dt><dd id="stat-sum-total">—</dd></div>
+          </dl>
+          <p class="stats__hint" id="stat-sum-note">Shown after a question that moved messages into the summary.</p>
+        </section>
+      </aside>
+    </div>
+
+    <footer class="composer">
+      <div class="composer__inner">
+        <p class="composer__error" id="error" role="alert" hidden></p>
+        <form class="composer__form" id="form" autocomplete="off">
+          <textarea id="question" name="question" rows="1" maxlength="8000"
+                    placeholder="ask your question, master" aria-label="Your question"></textarea>
+          <button type="submit" class="btn btn--primary" id="ask" disabled>ask</button>
+        </form>
+        <div class="composer__meta">
+          <span id="draft-tokens"></span>
+          <span class="composer__hint">Enter to ask · Shift+Enter for a new line</span>
+        </div>
+      </div>
+    </footer>
+
+  </div>
+
+  <script src="/vendor/marked.min.js"></script>
+  <script src="/vendor/purify.min.js"></script>
+  <script src="/shared/tokenService.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

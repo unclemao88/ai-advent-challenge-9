@@ -1,0 +1,20 @@
+{
+  "name": "deepseek-agent-day9",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DeepSeek chat agent with two-level persistent memory: a rolling summary plus the last 10 messages, with token accounting",
+  "main": "src/server/server.js",
+  "scripts": {
+    "start": "node src/server/server.js",
+    "test": "node test/run.js"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.15",
+    "express": "^4.21.2",
+    "marked": "^4.3.0"
+  },
+  "engines": {
+    "node": ">=10"
+  },
+  "license": "MIT"
+}

@@ -56,7 +56,7 @@ service manager can supply the key instead.
 | `DEEPSEEK_MODEL` | no | `deepseek-chat` | The model to call. |
 | `PORT` | no | `3000` | Port to listen on. |
 | `HOST` | no | `127.0.0.1` | Interface to bind. Loopback only by default. |
-| `DATA_DIR` | no | `./data` | Where `chat-history.json` lives. A packaged install points this at a writable state directory. |
+| `DATA_DIR` | no | `$STATE_DIRECTORY`, else `./data` | Where `chat-history.json` lives. Under systemd, leave it unset: `$STATE_DIRECTORY` comes from `StateDirectory=` and is the one path that is writable. |
 | `DEEPSEEK_API_URL` | no | `https://api.deepseek.com/chat/completions` | Override for a proxy or a compatible endpoint. A base URL (`https://api.deepseek.com`, with or without `/v1`) is completed to the chat-completions path. |
 | `DEEPSEEK_TIMEOUT_MS` | no | `60000` | Hard limit on one DeepSeek exchange. |
 | `DEEPSEEK_HISTORY_LIMIT` | no | `0` (all) | Replay only the last N stored messages. |
@@ -259,7 +259,16 @@ The history is the agent's memory, so it must survive a redeploy. The unit sets
 `StateDirectory=deepseek-agent`, which makes systemd create
 `/var/lib/deepseek-agent` owned by the service account — writable even under
 `ProtectSystem=strict`, while `/opt/deepseek-agent` stays read-only. The app
-writes `$DATA_DIR/chat-history.json` and nothing else.
+reads systemd's own `$STATE_DIRECTORY`, so that one line is the only place the
+path is written down.
+
+Rename it if you like — `StateDirectory=deepseek-agent-day7` is fine, and the
+history moves with it. What does not work is naming the directory twice:
+`ProtectSystem=strict` unlocks **only** the `StateDirectory=` path, so a
+`DATA_DIR` pointing anywhere else lands on the read-only part of the filesystem
+and the service dies at startup with `EROFS`. No amount of `chown` or `chmod`
+fixes that, because it is not a permissions problem. Leave `DATA_DIR` out of the
+unit.
 
 Nothing to do by hand here, but if you are moving an existing conversation over:
 
@@ -327,7 +336,8 @@ alone, so the agent keeps its memory across upgrades. To wipe the conversation:
 | `returned a response that is not JSON` | Something other than the API answered — a proxy, a captive portal, or hijacked DNS | `curl -sS -o /dev/null -w '%{http_code}\n' https://api.deepseek.com/chat/completions` from the same host |
 | `status=217/USER` | The `deepseek-agent` user does not exist | Step 2; confirm with `id deepseek-agent` |
 | `Cannot find module 'express'` | `node_modules` was not deployed | Run `npm ci --omit=dev` before the rsync in step 3 |
-| `Could not open the history file: EROFS/EACCES` | `DATA_DIR` points inside the read-only tree | Keep `StateDirectory=` and `DATA_DIR=/var/lib/deepseek-agent` as shipped |
+| `Could not open the history file: EROFS` | The write target is not the `StateDirectory=` path, so `ProtectSystem=strict` keeps it read-only. `chown`/`chmod` cannot fix this | Remove `DATA_DIR` from the unit so `$STATE_DIRECTORY` decides, or make the two name the same directory |
+| `Could not open the history file: EACCES` | The directory exists and is writable, but not by `User=` — often a manual `chown` to root with no group write | `sudo rm -rf /var/lib/<statedir>` and restart; systemd recreates it owned by `User=` at 0700 |
 | History empty after a redeploy | The rsync overwrote a `data/` directory in `/opt` | The memory belongs in `/var/lib/deepseek-agent`; keep `--exclude data` |
 | `code=killed, signal=SYS` | A syscall hit the seccomp filter | Covered by `SystemCallErrorNumber=EPERM` + `UV_USE_IO_URING=0`; if it persists, comment out both `SystemCallFilter` lines |
 | `getaddrinfo EAI_AGAIN` | `RestrictAddressFamilies=` is missing `AF_NETLINK` | Use the unit as shipped |

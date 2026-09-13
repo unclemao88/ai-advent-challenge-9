@@ -15,12 +15,17 @@ Environment=HOST=127.0.0.1
 Environment=PORT=3000
 Environment=DEEPSEEK_MODEL=deepseek-chat
 # The conversation is the agent's memory, so it must outlive the deployment.
-# StateDirectory creates /var/lib/deepseek-agent owned by this user (0700) and
-# makes it writable despite ProtectSystem=strict; the app writes
-# $DATA_DIR/chat-history.json and nothing else.
+# StateDirectory creates /var/lib/deepseek-agent owned by User=/Group= above
+# (0700) and makes it writable despite ProtectSystem=strict, which leaves the
+# rest of the filesystem read-only. The app reads systemd's own
+# $STATE_DIRECTORY, so renaming this one line moves the history with it and the
+# two can never disagree; do not add DATA_DIR here as well.
+#
+# Rename it freely — StateDirectory=deepseek-agent-day7 is fine — but rename
+# nothing else: a DATA_DIR pointing anywhere outside this directory is on the
+# read-only part of the filesystem, and the service dies at startup with EROFS.
 StateDirectory=deepseek-agent
 StateDirectoryMode=0700
-Environment=DATA_DIR=/var/lib/deepseek-agent
 # libuv uses io_uring for file I/O on recent kernels, and systemd excludes the
 # io_uring syscalls from @system-service. Ask libuv not to use it at all.
 Environment=UV_USE_IO_URING=0

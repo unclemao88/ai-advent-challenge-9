@@ -122,5 +122,20 @@ storage.init().then(function () {
   });
 }).catch(function (err) {
   console.error('Could not open the history file: ' + err.message);
+  // EROFS and EACCES here are almost always the sandbox rather than the disk,
+  // and chmod cannot fix EROFS — say so, because the errno points at the file
+  // while the cause is in the unit.
+  if (err.code === 'EROFS') {
+    console.error(
+      '  The filesystem is read-only at that path. Under ProtectSystem=strict, systemd\n' +
+      '  unlocks only the directory named by StateDirectory= (and anything in\n' +
+      '  ReadWritePaths=). Point them at the same place, or drop DATA_DIR from the unit\n' +
+      '  and let $STATE_DIRECTORY decide.');
+  } else if (err.code === 'EACCES' || err.code === 'EPERM') {
+    console.error(
+      '  The path is writable but this user is not allowed to write there. With\n' +
+      '  StateDirectory=, systemd owns that directory to User=/Group= itself — a manual\n' +
+      '  chown to root can take it away again.');
+  }
   process.exit(1);
 });

@@ -5,12 +5,25 @@ const path = require('path');
 const crypto = require('crypto');
 
 // ./data next to the project when running from a checkout. A packaged install
-// points this at a writable state directory instead (systemd's StateDirectory),
-// because the code itself is deployed read-only.
-const DATA_DIR = process.env.DATA_DIR
-  ? path.resolve(process.env.DATA_DIR)
-  : path.join(__dirname, '..', 'data');
+// needs somewhere else, because the code itself is deployed read-only.
+//
+// systemd sets $STATE_DIRECTORY from StateDirectory=, and that is the only
+// directory it unlocks under ProtectSystem=strict — so preferring it over a
+// hand-written path means the two can never name different directories and
+// leave the service writing to a read-only filesystem. DATA_DIR still wins for
+// anyone not running under systemd.
+const DATA_DIR = path.resolve(
+  process.env.DATA_DIR ||
+  firstPath(process.env.STATE_DIRECTORY) ||
+  path.join(__dirname, '..', 'data')
+);
 const HISTORY_FILE = path.join(DATA_DIR, 'chat-history.json');
+
+/** $STATE_DIRECTORY is colon-separated when a unit asks for several. */
+function firstPath(value) {
+  const first = typeof value === 'string' ? value.split(':')[0].trim() : '';
+  return first || null;
+}
 
 // The two roles the application stores, and the label each one carries into
 // the UI. Anything the client sends is ignored; a message is only ever built

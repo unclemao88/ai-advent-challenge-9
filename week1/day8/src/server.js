@@ -189,8 +189,11 @@ storage.init().then(function () {
     });
   });
 }).catch(function (err) {
-  // A corrupt history.json lands here: say so plainly instead of starting up
-  // with an empty memory and silently overwriting the conversation.
-  console.error('Could not open ' + storage.RELATIVE_NAME + ': ' + err.message);
+  // A corrupt or unwritable history file lands here: say so plainly instead of
+  // starting with an empty memory and silently overwriting the conversation.
+  // A StorageError already names the file and the remedy — do not prefix it.
+  console.error(err instanceof StorageError
+    ? 'Cannot start: ' + err.message
+    : 'Cannot start: could not open ' + storage.RELATIVE_NAME + ': ' + err.message);
   process.exit(1);
 });

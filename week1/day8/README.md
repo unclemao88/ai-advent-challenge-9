@@ -358,10 +358,16 @@ npm ci --omit=dev            # or: npm install --production
 install -m 0640 -o root -g deepseek .env.example /opt/deepseek-agent/.env
 editor /opt/deepseek-agent/.env      # set DEEPSEEK_API_KEY
 
-# 4. The writable directory, and ownership
+# 4. The writable directory. The service user must OWN it, not merely be in its
+#    group: creating history.json and its temporary file needs write permission
+#    on the directory itself. Group r-x is not enough and is the usual mistake.
 mkdir -p /opt/deepseek-agent/data
 chown -R deepseek:deepseek /opt/deepseek-agent/data
+chmod 750 /opt/deepseek-agent/data
 chown -R root:root /opt/deepseek-agent/src /opt/deepseek-agent/public
+
+#    Confirm before starting — this must print "writable":
+sudo -u deepseek test -w /opt/deepseek-agent/data && echo writable
 
 # 5. The unit
 cp deploy/deepseek-agent.service /etc/systemd/system/
@@ -385,6 +391,32 @@ bookworm and for NodeSource builds, but Debian 10 and older may need
 ```bash
 command -v node
 ```
+
+### Troubleshooting
+
+**`Cannot start: Could not create data/history.json: permission denied`** — the
+data directory is not writable by the service account. This is ownership, not
+systemd: check that the user *owns* the directory.
+
+```bash
+ls -ld /opt/deepseek-agent/data      # want: drwxr-x--- deepseek deepseek
+chown -R deepseek:deepseek /opt/deepseek-agent/data
+systemctl restart deepseek-agent
+```
+
+A `drwxr-x--- root deepseek` directory looks close enough to be convincing and
+is not: group `r-x` lets the service read and enter the directory but never
+create a file in it. The service exits 1 and systemd restarts it every 5s, so
+the same line repeats in the journal.
+
+**`read-only filesystem`** instead of `permission denied` is the other failure,
+and means the opposite: ownership is fine but `ProtectSystem=strict` is not
+letting the path through. Check that `ReadWritePaths=` in the unit names the
+directory you actually installed into.
+
+**Nothing in the journal at all** — systemd could not start the process. Check
+`systemctl status deepseek-agent` for a bad `ExecStart` path (`command -v node`)
+or an unknown directive on older systemd.
 
 Notes on the unit:
 

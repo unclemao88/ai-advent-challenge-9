@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
@@ -29,6 +30,20 @@ class StorageError extends Error {
     super(message);
     this.name = 'StorageError';
     this.cause = cause;
+  }
+}
+
+/**
+ * Who the process is running as, for permission messages. Under a service
+ * manager this is the account whose ownership of data/ is usually the problem,
+ * so naming it turns a guess into an instruction.
+ */
+function currentUserLabel() {
+  try {
+    return os.userInfo().username;
+  } catch (err) {
+    // No passwd entry (systemd DynamicUser=yes, some containers): uid will do.
+    return typeof process.getuid === 'function' ? 'uid ' + process.getuid() : 'this user';
   }
 }
 
@@ -183,7 +198,16 @@ function init() {
     if (raw !== null && raw.trim()) {
       return loadHistory().then(function () {}); // Fail loudly, now, not mid-chat.
     }
-    return writeAtomic(emptyHistory());
+    // First run. A failure here is nearly always the data directory not being
+    // writable by the service account, so say that rather than talking about a
+    // "previous history" that does not exist yet.
+    return writeAtomic(emptyHistory()).catch(function (err) {
+      const cause = (err && err.cause) || err;
+      throw new StorageError(
+        'Could not create ' + RELATIVE_NAME + ': ' + describeFsError(cause)
+        + '. The data directory must be writable by the user running the application ('
+        + currentUserLabel() + '); check the ownership and mode of ' + DATA_DIR + '.', cause);
+    });
   });
 }
 
@@ -246,8 +270,8 @@ function writeAtomic(history) {
     fs.unlink(tmp, function () {}); // Best effort; never mask the real error.
     if (err instanceof StorageError) throw err;
     throw new StorageError(
-      'Could not save to the conversation file (' + RELATIVE_NAME + '): '
-      + describeFsError(err) + '. The previous history is unchanged.', err);
+      'Could not save to ' + RELATIVE_NAME + ': ' + describeFsError(err)
+      + ' (writing as ' + currentUserLabel() + '). The stored history is unchanged.', err);
   });
 }
 

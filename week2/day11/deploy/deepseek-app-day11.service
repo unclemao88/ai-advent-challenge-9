@@ -1,0 +1,68 @@
+# systemd unit for the DeepSeek memory agent (week2/day11).
+#
+# Install:
+#   sudo cp deploy/deepseek-app-day11.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now deepseek-app-day11
+#
+# Logs:
+#   journalctl -u deepseek-app-day11 -f
+#
+# Prerequisites are listed in README.md, "Deploying on Debian (systemd)".
+
+[Unit]
+Description=DeepSeek web agent with three-layer memory (day11)
+Documentation=file:///opt/deepseek-app-day11/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deepseek-app
+Group=deepseek-app
+WorkingDirectory=/opt/deepseek-app-day11
+
+# DEEPSEEK_API_KEY (and optionally DEEPSEEK_MODEL, DEEPSEEK_TIMEOUT_MS) live here.
+EnvironmentFile=/etc/deepseek-app.env
+Environment=NODE_ENV=production
+
+# PORT and HOST are set on the command line on purpose. Values from
+# EnvironmentFile= override Environment=, and /etc/deepseek-app.env may be
+# shared with other instances that set their own PORT. `env` makes 3011 and
+# loopback-only binding win regardless of what that file contains.
+ExecStart=/usr/bin/env PORT=3011 HOST=127.0.0.1 /usr/bin/node src/server.js
+
+Restart=on-failure
+RestartSec=5
+# The app stops accepting connections on SIGTERM and exits once in-flight
+# requests (and their memory writes) finish; it forces an exit after 15s.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# --- Hardening ---------------------------------------------------------------
+# The whole filesystem is read-only for the service except the data directory,
+# which must exist before the first start (see README).
+ProtectSystem=strict
+ReadWritePaths=/opt/deepseek-app-day11/data
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+# Memory files are personal data: readable by the service user and group only.
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

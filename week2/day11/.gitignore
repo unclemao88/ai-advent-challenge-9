@@ -1,0 +1,13 @@
+node_modules/
+npm-debug.log*
+*.log
+
+# Secrets: the API key comes from the environment, never from the repo
+.env
+.env.*
+!.env.example
+
+# Memory contents and settings are personal data, created on first start
+data/
+
+.DS_Store

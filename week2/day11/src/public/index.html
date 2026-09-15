@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepSeek Agent · Memory</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🧠</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand__dot" aria-hidden="true"></span>
+        <h1>DeepSeek Agent</h1>
+        <span class="brand__model" id="model-label"></span>
+      </div>
+      <button type="button" class="button button--ghost" id="open-settings">Memory settings</button>
+    </header>
+
+    <p class="banner" id="status-banner" role="alert" hidden></p>
+
+    <div class="workspace">
+
+      <section class="conversation" aria-label="Conversation">
+        <!-- The only scrolling region of the page. -->
+        <main class="chat" id="chat" tabindex="0">
+          <div class="chat__inner" id="messages" role="log" aria-live="polite"></div>
+
+          <div class="chat__empty" id="empty-state" hidden>
+            <p class="chat__empty-title">No conversation in short-term memory yet.</p>
+            <p>Ask anything. To save something to memory, write it on its own line:</p>
+            <ul class="commands">
+              <li><code>task: Build a Node.js agent</code><span>work memory</span></li>
+              <li><code>decision: Use Express</code><span>work memory</span></li>
+              <li><code>requirement: …</code> <code>constraint: …</code> <code>todo: …</code> <code>state: …</code><span>work memory</span></li>
+              <li><code>my name is Max</code> <code>I prefer short answers</code><span>long-term memory</span></li>
+              <li><code>remember about Node.js: …</code><span>long-term memory</span></li>
+              <li><code>that worked</code><span>saves the last answer as a solution</span></li>
+            </ul>
+          </div>
+        </main>
+
+        <!-- Pinned under the chat; it never scrolls with it. -->
+        <footer class="composer">
+          <p class="composer__error" id="error" role="alert" hidden></p>
+          <form class="composer__form" id="form" autocomplete="off">
+            <textarea
+              id="message"
+              name="message"
+              class="composer__input"
+              rows="1"
+              maxlength="8000"
+              placeholder="ask your question, master"
+              aria-label="Your question"></textarea>
+            <button type="submit" class="composer__button" id="ask" disabled>ask</button>
+          </form>
+          <div class="composer__status">
+            <span title="Tokens in the complete context that will be sent to DeepSeek: system instructions, all memory layers, the conversation and your question.">
+              Current request context: <strong id="composer-context">~0</strong> tokens
+            </span>
+            <span class="composer__hint">Enter to send · Shift+Enter for a new line</span>
+          </div>
+        </footer>
+      </section>
+
+      <aside class="memory" aria-label="Memory">
+        <div class="memory__head">
+          <h2>Memory</h2>
+          <span class="pill" title="DeepSeek publishes no JavaScript tokenizer, so counts are estimated locally. The exact count DeepSeek reports is shown under Last request.">~ estimated</span>
+        </div>
+
+        <dl class="memory__layers">
+          <div class="layer-stat" id="stat-shortTerm">
+            <dt>Short-term</dt>
+            <dd class="layer-stat__tokens"><span id="tokens-shortTerm">~0</span> tokens</dd>
+            <dd class="layer-stat__meta" id="meta-shortTerm"></dd>
+          </div>
+          <div class="layer-stat" id="stat-work">
+            <dt>Work</dt>
+            <dd class="layer-stat__tokens"><span id="tokens-work">~0</span> tokens</dd>
+            <dd class="layer-stat__meta" id="meta-work"></dd>
+          </div>
+          <div class="layer-stat" id="stat-longTerm">
+            <dt>Long-term</dt>
+            <dd class="layer-stat__tokens"><span id="tokens-longTerm">~0</span> tokens</dd>
+            <dd class="layer-stat__meta" id="meta-longTerm"></dd>
+          </div>
+        </dl>
+        <p class="memory__note">Each layer: the tokens its contents take up in the request.</p>
+
+        <div class="memory__context">
+          <div class="context-total">
+            <span>Current request context</span>
+            <strong id="tokens-context">~0 tokens</strong>
+          </div>
+          <p class="memory__note">
+            The complete context sent to DeepSeek with your question as typed. Includes more than the three layers:
+          </p>
+          <ul class="breakdown" id="breakdown"></ul>
+        </div>
+
+        <div class="memory__last" id="last-request" hidden>
+          <h3>Last request sent</h3>
+          <ul class="breakdown">
+            <li><span>Context, estimated</span><span class="num" id="last-estimate"></span></li>
+            <li><span>Context, counted by DeepSeek</span><span class="num" id="last-actual"></span></li>
+            <li><span>Answer, counted by DeepSeek</span><span class="num" id="last-answer"></span></li>
+          </ul>
+        </div>
+      </aside>
+
+    </div>
+  </div>
+
+  <dialog class="settings" id="settings-dialog" aria-labelledby="settings-title">
+    <div class="settings__frame">
+      <header class="settings__header">
+        <h2 id="settings-title">Memory settings</h2>
+        <button type="button" class="icon-button" id="settings-close" aria-label="Close">×</button>
+      </header>
+
+      <div class="settings__body">
+        <div id="settings-layers"></div>
+
+        <details class="settings__context">
+          <summary>Exact context the next request will send</summary>
+          <pre class="contents" id="context-preview"></pre>
+        </details>
+      </div>
+
+      <footer class="settings__footer">
+        <span class="settings__status" id="settings-status" role="status"></span>
+        <button type="button" class="button button--ghost" id="settings-cancel">Close</button>
+        <button type="button" class="button button--primary" id="settings-save" disabled>Save changes</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <template id="layer-template">
+    <section class="layer-card">
+      <header class="layer-card__head">
+        <div>
+          <h3 class="layer-card__title"></h3>
+          <p class="layer-card__purpose"></p>
+        </div>
+        <span class="layer-card__tokens"></span>
+      </header>
+
+      <div class="layer-card__controls">
+        <label class="field">
+          <span class="field__label">Storage</span>
+          <select class="field__control layer-card__storage"></select>
+        </label>
+        <label class="field layer-card__max" hidden>
+          <span class="field__label">Max messages</span>
+          <input class="field__control layer-card__max-input" type="number" min="2" max="500" step="1">
+        </label>
+      </div>
+      <p class="layer-card__note"></p>
+
+      <details class="layer-card__contents">
+        <summary>Contents</summary>
+        <pre class="contents"></pre>
+      </details>
+
+      <div class="layer-card__actions">
+        <button type="button" class="button button--danger layer-card__clear"></button>
+        <div class="confirm" hidden>
+          <span class="confirm__text">Delete the profile, preferences, solutions and knowledge? This cannot be undone.</span>
+          <button type="button" class="button button--danger confirm__yes">Yes, clear long-term memory</button>
+          <button type="button" class="button button--ghost confirm__no">Cancel</button>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

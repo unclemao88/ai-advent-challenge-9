@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>DeepSeek Agent · Profile &amp; Memory</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🧠</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- The page itself never scrolls: the chat area is the only scrolling region. -->
+  <div class="app">
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand__dot" aria-hidden="true"></span>
+        <h1>DeepSeek Agent</h1>
+        <span class="brand__model" id="model-label"></span>
+      </div>
+      <button type="button" class="button button--ghost" id="open-memory">Memory &amp; settings</button>
+    </header>
+
+    <p class="banner" id="status-banner" role="alert" hidden></p>
+
+    <!-- Token statistics. Always visible; updated after every request and
+         whenever memory, the profile or the settings change. -->
+    <section class="stats" aria-label="Memory statistics">
+      <h2 class="stats__title">Memory</h2>
+      <dl class="stats__grid">
+        <div class="stat" id="stat-shortTerm">
+          <dt>Short-term</dt>
+          <dd><span id="tokens-shortTerm">~0</span> tokens</dd>
+        </div>
+        <div class="stat" id="stat-work">
+          <dt>Work memory</dt>
+          <dd><span id="tokens-work">~0</span> tokens</dd>
+        </div>
+        <div class="stat" id="stat-longTerm">
+          <dt>Long-term</dt>
+          <dd><span id="tokens-longTerm">~0</span> tokens</dd>
+        </div>
+        <div class="stat" id="stat-profile">
+          <dt>Profile</dt>
+          <dd><span id="tokens-profile">~0</span> tokens</dd>
+        </div>
+        <div class="stat stat--total" id="stat-context">
+          <dt>Current context</dt>
+          <dd><span id="tokens-context">~0</span> tokens</dd>
+        </div>
+      </dl>
+      <p class="stats__note">
+        <strong>Current context</strong> is the complete payload for your next request — system
+        instructions, profile, all memory layers and your question — not just the text you typed.
+      </p>
+    </section>
+
+    <!-- The only scrolling region of the page. -->
+    <main class="chat" id="chat" tabindex="0">
+      <div class="chat__inner" id="messages" role="log" aria-live="polite"></div>
+
+      <div class="chat__empty" id="empty-state" hidden>
+        <p class="chat__empty-title">No conversation yet.</p>
+        <p>Ask anything. Set your <strong>Profile</strong> to shape every answer, and save memory by
+          writing one of these on its own line:</p>
+        <ul class="commands">
+          <li><code>task: Build a Node.js agent</code><span>work memory</span></li>
+          <li><code>requirement: …</code> <code>constraint: …</code> <code>decision: …</code><span>work memory</span></li>
+          <li><code>fact: …</code> <code>variable: …</code> <code>result: …</code> <code>todo: …</code><span>work memory</span></li>
+          <li><code>remember about Node.js: fetch is built in</code><span>long-term knowledge</span></li>
+          <li><code>solution: slow start =&gt; cache the index</code><span>long-term solution</span></li>
+          <li><code>that worked</code><span>saves the last answer as a solution</span></li>
+          <li><code>style: direct and technical</code> <code>format: …</code> <code>limitations: …</code><span>profile</span></li>
+        </ul>
+      </div>
+    </main>
+
+    <!-- Pinned under the chat; it never moves when the conversation scrolls. -->
+    <footer class="composer">
+      <p class="composer__error" id="error" role="alert" hidden></p>
+      <form class="composer__form" id="form" autocomplete="off">
+        <textarea
+          id="message"
+          name="message"
+          class="composer__input"
+          rows="1"
+          maxlength="8000"
+          placeholder="ask your question, master"
+          aria-label="Your question"></textarea>
+        <button type="submit" class="composer__button" id="ask" disabled>ask</button>
+        <button type="button" class="composer__profile" id="open-profile" aria-haspopup="dialog">
+          Profile<span class="composer__profile-dot" id="profile-dot" hidden aria-hidden="true"></span>
+        </button>
+      </form>
+      <div class="composer__status">
+        <span title="Tokens in the complete context that will be sent to DeepSeek: system instructions, your profile, every memory layer, the conversation and your question.">
+          Current request context: <strong id="composer-context">~0</strong> tokens
+        </span>
+        <span class="composer__hint">Enter to send · Shift+Enter for a new line</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Profile: opened from the control next to "ask", hovers over the page and
+       never navigates away from the conversation. -->
+  <dialog class="modal" id="profile-dialog" aria-labelledby="profile-title">
+    <form class="modal__frame" id="profile-form" method="dialog">
+      <header class="modal__header">
+        <div>
+          <h2 id="profile-title">Your profile</h2>
+          <p class="modal__subtitle">Attached to every request sent to DeepSeek.</p>
+        </div>
+        <button type="button" class="icon-button" id="profile-close" aria-label="Close">×</button>
+      </header>
+
+      <div class="modal__body">
+        <div class="profile-fields" id="profile-fields"></div>
+
+        <p class="profile-meta" id="profile-meta"></p>
+
+        <div class="confirm" id="profile-confirm" hidden>
+          <span class="confirm__text">Delete the profile completely? Style, format and limitations are lost.</span>
+          <button type="button" class="button button--danger" id="profile-delete-yes">Yes, delete it</button>
+          <button type="button" class="button button--ghost" id="profile-delete-no">Cancel</button>
+        </div>
+      </div>
+
+      <footer class="modal__footer">
+        <span class="modal__status" id="profile-status" role="status"></span>
+        <button type="button" class="button button--ghost" id="profile-clear">Clear fields</button>
+        <button type="button" class="button button--danger" id="profile-delete">Delete</button>
+        <button type="submit" class="button button--primary" id="profile-save">Save profile</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Memory: storage configuration plus viewing, editing and clearing each layer. -->
+  <dialog class="modal modal--wide" id="memory-dialog" aria-labelledby="memory-title">
+    <div class="modal__frame">
+      <header class="modal__header">
+        <div>
+          <h2 id="memory-title">Memory &amp; settings</h2>
+          <p class="modal__subtitle">
+            Each layer is stored separately and can be viewed, edited, cleared and reconfigured here.
+          </p>
+        </div>
+        <button type="button" class="icon-button" id="memory-close" aria-label="Close">×</button>
+      </header>
+
+      <div class="modal__body">
+        <div id="memory-layers"></div>
+
+        <details class="context-preview">
+          <summary>Exact context the next request will send</summary>
+          <pre class="contents" id="context-preview"></pre>
+        </details>
+      </div>
+
+      <footer class="modal__footer">
+        <span class="modal__status" id="memory-status" role="status"></span>
+        <button type="button" class="button button--ghost" id="memory-cancel">Close</button>
+        <button type="button" class="button button--primary" id="memory-save" disabled>Save storage settings</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <template id="layer-template">
+    <section class="layer">
+      <header class="layer__head">
+        <div>
+          <h3 class="layer__title"></h3>
+          <p class="layer__purpose"></p>
+        </div>
+        <span class="layer__tokens"></span>
+      </header>
+
+      <div class="layer__controls">
+        <label class="field">
+          <span class="field__label">Storage</span>
+          <select class="field__control layer__storage"></select>
+        </label>
+        <label class="field layer__size" hidden>
+          <span class="field__label layer__size-label"></span>
+          <input class="field__control layer__size-input" type="number" step="1">
+        </label>
+      </div>
+      <p class="layer__note"></p>
+
+      <div class="layer__contents"></div>
+
+      <div class="layer__actions">
+        <button type="button" class="button button--ghost layer__save" hidden>Save contents</button>
+        <button type="button" class="button button--danger layer__clear"></button>
+        <div class="confirm layer__confirm" hidden>
+          <span class="confirm__text"></span>
+          <button type="button" class="button button--danger confirm__yes">Yes, clear it</button>
+          <button type="button" class="button button--ghost confirm__no">Cancel</button>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,81 @@
+# systemd unit for the DeepSeek memory agent (week2/day12).
+#
+# Install:
+#   sudo cp deploy/deepseek-app-day12.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now deepseek-app-day12
+#
+# Logs:
+#   journalctl -u deepseek-app-day12 -f
+#
+# Prerequisites are listed in README.md, "Deploying on Debian (systemd)".
+
+[Unit]
+Description=DeepSeek Agent (day 12) — chat with a user profile and three-layer memory
+Documentation=https://github.com/unclemao88/ai-advent-challenge-9/tree/main/week2/day12
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=deepseek-app
+Group=deepseek-app
+WorkingDirectory=/opt/deepseek-app-day12
+ExecStart=/usr/bin/node /opt/deepseek-app-day12/src/server.js
+
+Environment=NODE_ENV=production
+Environment=PORT=3012
+Environment=HOST=127.0.0.1
+
+# Memory and settings live outside the read-only code tree. systemd creates
+# /var/lib/deepseek-app-day12 owned by the service user before every start, and
+# it is the only writable path under ProtectSystem=strict. The app creates the
+# short-term/, work/ and long-term/ subdirectories and settings.json itself.
+StateDirectory=deepseek-app-day12
+StateDirectoryMode=0700
+Environment=DATA_DIR=/var/lib/deepseek-app-day12
+
+Environment=UV_USE_IO_URING=0
+# DEEPSEEK_API_KEY (and optionally DEEPSEEK_MODEL, DEEPSEEK_TIMEOUT_MS).
+# Values here override Environment= above, so keep PORT/DATA_DIR out of it.
+EnvironmentFile=/etc/deepseek-app.env
+
+Restart=on-failure
+RestartSec=5
+# On SIGTERM the app stops accepting connections and exits once in-flight
+# requests (and their memory writes) finish; it forces an exit after 15s.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deepseek-app-day12
+
+# --- Hardening ---------------------------------------------------------------
+# The profile, memory and conversation log are personal data: readable by the
+# service user only.
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadOnlyPaths=/opt/deepseek-app-day12
+
+[Install]
+WantedBy=multi-user.target

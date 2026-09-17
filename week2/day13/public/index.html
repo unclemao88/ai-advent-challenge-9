@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>DeepSeek Agent</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- The document never scrolls. The chat is the only scrolling region, so the
+       form at the bottom always stays in place. -->
+  <div class="app">
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand__dot" id="health-dot" aria-hidden="true"></span>
+        <h1>DeepSeek Agent</h1>
+        <span class="badge" id="model-badge">…</span>
+        <span class="badge" id="tokenizer-badge" hidden></span>
+      </div>
+      <nav class="topbar__actions">
+        <button type="button" class="button button--ghost" data-open-memory="tasks">Tasks</button>
+        <button type="button" class="button button--ghost" data-open-memory="storage">Memory</button>
+      </nav>
+    </header>
+
+    <p class="banner" id="config-banner" role="alert" hidden></p>
+
+    <!-- Task state: always visible, updated after every response. -->
+    <section class="taskbar" aria-label="Task state" id="taskbar">
+      <ol class="stepper" id="stepper" aria-label="Task progress">
+        <li data-state="planning">planning</li>
+        <li data-state="execution">execution</li>
+        <li data-state="validation">validation</li>
+        <li data-state="done">done</li>
+      </ol>
+      <dl class="taskinfo">
+        <div><dt>Task ID</dt><dd id="task-id" class="mono">—</dd></div>
+        <div><dt>Current state</dt><dd id="task-current">—</dd></div>
+        <div><dt>Next state</dt><dd id="task-next">—</dd></div>
+        <div><dt>Status</dt><dd id="task-status">no task</dd></div>
+        <div class="taskinfo__wide"><dt>Planned action</dt><dd id="task-action">Ask a question to start a task.</dd></div>
+      </dl>
+      <div class="taskbar__controls">
+        <div class="segmented" role="radiogroup" aria-label="Execution mode">
+          <span class="segmented__label">Execution mode</span>
+          <button type="button" role="radio" data-mode="manual" aria-checked="true">Manual</button>
+          <button type="button" role="radio" data-mode="auto" aria-checked="false">Auto</button>
+        </div>
+        <div class="taskbar__buttons">
+          <button type="button" class="button button--primary" id="btn-continue" disabled>continue</button>
+          <button type="button" class="button" id="btn-pause" disabled>pause</button>
+          <button type="button" class="button button--ghost" id="btn-new-task" disabled>new task</button>
+        </div>
+      </div>
+      <p class="taskbar__error" id="task-error" hidden></p>
+    </section>
+
+    <!-- Token counters. -->
+    <section class="stats" aria-label="Memory statistics">
+      <div class="stat"><span class="stat__label">Short-term memory</span><span class="stat__value"><b id="tok-short">0</b> tokens</span></div>
+      <div class="stat"><span class="stat__label">Work memory</span><span class="stat__value"><b id="tok-work">0</b> tokens</span></div>
+      <div class="stat"><span class="stat__label">Long-term memory</span><span class="stat__value"><b id="tok-long">0</b> tokens</span></div>
+      <div class="stat stat--total" title="System instructions + profile + long-term memory + work memory + short-term memory + your current question, as sent to DeepSeek.">
+        <span class="stat__label">Current request context <span class="pill" id="tok-method"></span></span>
+        <span class="stat__value"><b id="tok-context">0</b> tokens</span>
+      </div>
+      <p class="stats__last" id="last-usage" hidden></p>
+    </section>
+
+    <main class="chat" id="chat" tabindex="0" aria-label="Conversation">
+      <div class="chat__inner" id="messages" role="log" aria-live="polite"></div>
+      <div class="empty" id="empty" hidden>
+        <p class="empty__title">Ask anything to start a task.</p>
+        <p>Each task runs <b>planning → execution → validation → done</b>. In <b>Manual</b> mode the agent stops after each
+          state and waits for <b>continue</b>; in <b>Auto</b> mode it runs straight through.</p>
+        <ul class="empty__list">
+          <li><code>remember: …</code> saves to long-term knowledge; <code>remember solution: …</code> and
+            <code>remember preference: …</code> save to the other categories.</li>
+          <li><code>requirement: …</code>, <code>decision: …</code>, <code>fact: …</code> add to the task's work memory.</li>
+          <li>The <b>Profile</b> button sets style, format and limitations for every answer.</li>
+        </ul>
+      </div>
+    </main>
+
+    <footer class="composer">
+      <p class="composer__error" id="error" role="alert" hidden></p>
+      <form class="composer__form" id="ask-form" autocomplete="off" novalidate>
+        <textarea id="question" name="question" rows="1" maxlength="8000" class="composer__input"
+          placeholder="ask your question, master" aria-label="Your question"></textarea>
+        <button type="button" class="composer__profile" id="btn-profile" aria-haspopup="dialog" title="Your profile">
+          Profile<span class="composer__dot" id="profile-dot" hidden aria-hidden="true"></span>
+        </button>
+        <button type="submit" class="composer__ask" id="btn-ask" disabled>ask</button>
+      </form>
+      <p class="composer__hint"><span id="route-hint">Your question starts a new task.</span>
+        <span class="composer__keys">Enter to send · Shift+Enter for a new line</span></p>
+    </footer>
+  </div>
+
+  <!-- Profile modal: hovers over the chat, never navigates away. -->
+  <dialog class="modal" id="profile-dialog" aria-labelledby="profile-title">
+    <form class="modal__frame" id="profile-form" method="dialog" novalidate>
+      <header class="modal__header">
+        <div>
+          <h2 id="profile-title">Your profile</h2>
+          <p class="modal__sub">Attached to every request sent to DeepSeek. Free text; the suggestions are only shortcuts.</p>
+        </div>
+        <button type="button" class="icon-button" data-close aria-label="Close">×</button>
+      </header>
+      <div class="modal__body">
+        <p class="notice" id="profile-state"></p>
+        <div id="profile-fields"></div>
+        <details class="preview">
+          <summary>As sent in the [USER PROFILE] section (<span id="profile-tokens">0</span> tokens)</summary>
+          <pre id="profile-preview"></pre>
+        </details>
+        <div class="confirm" id="profile-confirm" hidden>
+          <span>Delete the profile? This cannot be undone.</span>
+          <button type="button" class="button button--danger" id="profile-delete-yes">Delete</button>
+          <button type="button" class="button button--ghost" id="profile-delete-no">Keep</button>
+        </div>
+      </div>
+      <footer class="modal__footer">
+        <span class="modal__status" id="profile-status" role="status"></span>
+        <button type="button" class="button button--danger-ghost" id="profile-delete">Delete profile</button>
+        <button type="button" class="button button--ghost" id="profile-clear">Clear profile</button>
+        <button type="submit" class="button button--primary" id="profile-save">Save profile</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Memory, storage, tasks and context. -->
+  <dialog class="modal modal--wide" id="memory-dialog" aria-labelledby="memory-title">
+    <div class="modal__frame">
+      <header class="modal__header">
+        <div>
+          <h2 id="memory-title">Memory &amp; tasks</h2>
+          <p class="modal__sub">Each memory layer is stored separately. Changing where a layer is stored copies its data; nothing is deleted.</p>
+        </div>
+        <button type="button" class="icon-button" data-close aria-label="Close">×</button>
+      </header>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="storage">Storage</button>
+        <button type="button" role="tab" data-tab="short">Short-term</button>
+        <button type="button" role="tab" data-tab="work">Work</button>
+        <button type="button" role="tab" data-tab="long">Long-term</button>
+        <button type="button" role="tab" data-tab="tasks">Tasks</button>
+        <button type="button" role="tab" data-tab="context">Context</button>
+      </div>
+      <div class="modal__body" id="memory-body"></div>
+      <footer class="modal__footer">
+        <span class="modal__status" id="memory-status" role="status"></span>
+        <button type="button" class="button button--ghost" data-close>Close</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- Only used when the server requires APP_AUTH_TOKEN. -->
+  <dialog class="modal" id="auth-dialog" aria-labelledby="auth-title">
+    <form class="modal__frame" id="auth-form" method="dialog">
+      <header class="modal__header"><h2 id="auth-title">Access token</h2></header>
+      <div class="modal__body">
+        <p>This server requires an access token (APP_AUTH_TOKEN).</p>
+        <input type="password" id="auth-token" class="input" autocomplete="current-password" aria-label="Access token" required>
+      </div>
+      <footer class="modal__footer"><button type="submit" class="button button--primary">Use token</button></footer>
+    </form>
+  </dialog>
+
+  <script src="markdown.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

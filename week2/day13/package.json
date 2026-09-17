@@ -1,0 +1,23 @@
+{
+  "name": "deepseek-agent-day13",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DeepSeek web agent with a task state machine, a user profile and three-layer memory",
+  "type": "module",
+  "main": "src/server/index.js",
+  "scripts": {
+    "start": "node src/server/index.js",
+    "dev": "node --watch-path=src src/server/index.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "mock:deepseek": "node scripts/mock-deepseek.js",
+    "fetch:tokenizer": "sh scripts/fetch-tokenizer.sh"
+  },
+  "dependencies": {
+    "@huggingface/tokenizers": "0.2.0",
+    "express": "^5.2.1"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,88 @@
+# systemd unit for the DeepSeek task agent (week2/day13).
+#
+# Install (scripts/install.sh does all of this):
+#   sudo cp systemd/deepseek-app-day13.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable deepseek-app-day13
+#   sudo systemctl start deepseek-app-day13
+#   sudo systemctl status deepseek-app-day13
+#
+# Logs:
+#   journalctl -u deepseek-app-day13 -f
+#   /opt/deepseek-app-day13/logs/app.log  (JSON lines, rotated at 10 MB)
+#
+# If `which node` is not /usr/bin/node, adjust ExecStart.
+
+[Unit]
+Description=DeepSeek Agent (day 13): task state machine, profile and three-layer memory
+Documentation=file:///opt/deepseek-app-day13/README.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=deepseek-app
+Group=deepseek-app
+WorkingDirectory=/opt/deepseek-app-day13
+ExecStart=/usr/bin/node /opt/deepseek-app-day13/src/server/index.js
+
+Environment=NODE_ENV=production
+Environment=PORT=3013
+Environment=HOST=0.0.0.0
+Environment=DATA_DIR=/opt/deepseek-app-day13/data
+Environment=LOG_DIR=/opt/deepseek-app-day13/logs
+Environment=UV_USE_IO_URING=0
+# Secrets and overrides. The leading "-" makes the file optional.
+# Values in this file override the Environment= lines above, so keep PORT,
+# HOST, DATA_DIR and LOG_DIR out of it unless you mean to change them.
+# /opt/deepseek-app-day13/.env is read by the application itself; variables
+# set here or above take precedence over it.
+EnvironmentFile=-/etc/deepseek-app.env
+
+Restart=always
+RestartSec=5
+# SIGTERM: stop accepting connections, let running agent steps finish and
+# their memory/task writes land, then exit. The app forces an exit after
+# SHUTDOWN_TIMEOUT_MS (90 s); systemd waits a little longer.
+KillSignal=SIGTERM
+TimeoutStopSec=100
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deepseek-app-day13
+
+# --- Hardening ---------------------------------------------------------------
+# Profile, memory and conversations are personal data: service user only.
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+ProtectProc=invisible
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RemoveIPC=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# The code is read-only for the running service; only data/ and logs/ are writable.
+ReadOnlyPaths=/opt/deepseek-app-day13
+ReadWritePaths=/opt/deepseek-app-day13/data /opt/deepseek-app-day13/logs
+# MemoryDenyWriteExecute is not set: V8's JIT needs writable+executable memory.
+
+[Install]
+WantedBy=multi-user.target

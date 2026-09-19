@@ -1,0 +1,82 @@
+# systemd unit for the DeepSeek agent (week2/day15).
+#
+# Installed as /etc/systemd/system/deepseek-app.service by
+# scripts/install-service.sh, which also replaces /usr/bin/node below with the
+# path of the installed Node.js (`command -v node`).
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable deepseek-app
+#   sudo systemctl start deepseek-app
+#   sudo systemctl status deepseek-app
+#   sudo journalctl -u deepseek-app -f
+
+[Unit]
+Description=DeepSeek Agent (day 15: task state machine, three-layer memory, profile, invariants)
+Documentation=file:///opt/deepseek-app-day15/README.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=deepseek-app
+Group=deepseek-app
+WorkingDirectory=/opt/deepseek-app-day15
+ExecStart=/usr/bin/node /opt/deepseek-app-day15/src/server.js
+
+Environment=NODE_ENV=production
+Environment=PORT=3015
+Environment=HOST=0.0.0.0
+Environment=DATA_DIR=/opt/deepseek-app-day15/data
+Environment=UV_USE_IO_URING=0
+# Secrets and shared settings (DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, …).
+# systemd reads the file as root before dropping privileges, so it stays
+# root-only (0600). It is shared with the other deepseek-app services, and its
+# values override the Environment= lines above: keep PORT, HOST and DATA_DIR out of it.
+EnvironmentFile=/etc/deepseek-app.env
+
+Restart=always
+RestartSec=5
+# SIGTERM: stop accepting connections, let running agent steps finish and their
+# memory/task writes land, then exit (the app forces an exit after 90 s).
+KillSignal=SIGTERM
+TimeoutStopSec=100
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deepseek-app
+
+# --- Hardening ---------------------------------------------------------------
+# Profile, memory and conversations are personal data: service user only.
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+ProtectProc=invisible
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RemoveIPC=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# The code is read-only for the running service; only data/ is writable.
+ReadOnlyPaths=/opt/deepseek-app-day15
+ReadWritePaths=/opt/deepseek-app-day15/data
+# MemoryDenyWriteExecute is not set: V8's JIT needs writable+executable memory.
+
+[Install]
+WantedBy=multi-user.target

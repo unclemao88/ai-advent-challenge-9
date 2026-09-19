@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>DeepSeek Agent · day 15</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- The document never scrolls. The chat and the side panel scroll on their
+       own, so the form at the bottom always stays in place. -->
+  <div class="app">
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand__dot" id="health-dot" aria-hidden="true"></span>
+        <h1>DeepSeek Agent</h1>
+        <span class="badge" id="model-badge">…</span>
+        <span class="badge" id="tokenizer-badge" hidden></span>
+      </div>
+      <nav class="topbar__actions">
+        <button type="button" class="button button--ghost" id="btn-open-invariants">Invariants <span class="count" id="inv-count">0</span></button>
+        <button type="button" class="button button--ghost" data-open-memory="short">Memory</button>
+        <button type="button" class="button button--ghost" data-open-memory="tasks">Tasks</button>
+        <button type="button" class="button button--ghost side-toggle" id="btn-side" aria-expanded="false" aria-controls="side">Status</button>
+      </nav>
+    </header>
+
+    <p class="banner" id="config-banner" role="alert" hidden></p>
+
+    <div class="layout">
+      <!-- Chat column: scrollable messages + the fixed form. -->
+      <section class="chat-column" aria-label="Chat">
+        <main class="chat" id="chat" tabindex="0" aria-label="Conversation">
+          <div class="chat__inner" id="messages" role="log" aria-live="polite"></div>
+          <div class="empty" id="empty" hidden>
+            <p class="empty__title">Ask anything to start a task.</p>
+            <p>Every task runs as a controlled state machine: <b>planning → execution → validation → done</b>.
+              No stage is ever skipped. In <b>Manual</b> mode the agent stops after each state; in <b>Auto</b> mode it
+              moves on by itself. It still stops, in the state it is in, for a question or an invariant conflict.</p>
+            <ul class="empty__list">
+              <li><b>profile</b> (next to <b>ask</b>) sets the style, format and limitations of every answer.</li>
+              <li><b>Invariants</b> are hard rules the agent never violates (architecture, adopted solutions,
+                stack limitations, business rules). Add the examples, then ask <code>Rewrite backend in Python</code>.</li>
+              <li><code>remember: …</code> and <code>remember solution: …</code> save to long-term memory;
+                <code>requirement: …</code>, <code>decision: …</code>, <code>fact: …</code> go to the task's work memory.</li>
+            </ul>
+          </div>
+        </main>
+
+        <footer class="composer">
+          <!-- The current task, right under the latest answer. Generated from the task the server returns. -->
+          <section class="taskbar" id="taskbar" aria-label="Current task" hidden>
+            <div class="taskbar__state">
+              <span>Current state: <b id="tb-current">—</b></span>
+              <span>Next state: <b id="tb-next">—</b></span>
+              <span>Mode: <b id="tb-mode">—</b></span>
+              <span class="pill" id="tb-status"></span>
+            </div>
+            <div class="taskbar__action">Planned action: <span id="tb-action">—</span></div>
+            <div class="taskbar__controls" id="tb-controls">
+              <button type="button" class="button button--small button--primary" id="btn-continue" hidden>Continue</button>
+              <button type="button" class="button button--small" id="btn-pause" hidden>Pause</button>
+              <button type="button" class="button button--small button--primary" id="btn-resume" hidden>Resume</button>
+              <button type="button" class="button button--small" id="btn-auto" hidden>Switch to Auto</button>
+              <button type="button" class="button button--small" id="btn-manual" hidden>Switch to Manual</button>
+              <button type="button" class="button button--small button--ghost" id="btn-new-task" hidden>New task</button>
+              <button type="button" class="button button--small button--danger-ghost" id="btn-cancel" hidden>Cancel task</button>
+            </div>
+            <div class="conflict-box" id="conflict-box" hidden></div>
+          </section>
+          <p class="composer__error" id="error" role="alert" hidden></p>
+          <form class="composer__form" id="ask-form" autocomplete="off" novalidate>
+            <textarea id="question" name="question" rows="1" maxlength="8000" class="composer__input"
+              placeholder="ask your question, master" aria-label="Your question"></textarea>
+            <button type="submit" class="composer__ask" id="btn-ask" disabled>ask</button>
+            <button type="button" class="composer__profile" id="btn-profile" aria-haspopup="dialog" title="Your profile">
+              profile<span class="composer__dot" id="profile-dot" hidden aria-hidden="true"></span>
+            </button>
+          </form>
+          <p class="composer__hint"><span id="route-hint">Your question starts a new task.</span>
+            <span class="composer__keys">Enter to send · Shift+Enter for a new line</span></p>
+        </footer>
+      </section>
+
+      <!-- Side panel: agent status, memory tokens, invariants. -->
+      <aside class="side" id="side" aria-label="Agent status">
+        <section class="card" aria-labelledby="status-title">
+          <header class="card__head">
+            <h2 id="status-title">Agent status</h2>
+            <span class="pill" id="task-status">no task</span>
+          </header>
+          <ol class="stepper" id="stepper" aria-label="Task states">
+            <li data-state="planning">planning</li>
+            <li data-state="execution">execution</li>
+            <li data-state="validation">validation</li>
+            <li data-state="done">done</li>
+          </ol>
+          <dl class="kv">
+            <div><dt>Task</dt><dd id="task-id" class="mono">—</dd></div>
+            <div><dt>Mode</dt><dd id="task-mode">—</dd></div>
+            <div><dt>Current state</dt><dd id="task-current">—</dd></div>
+            <div><dt>Next state</dt><dd id="task-next">—</dd></div>
+            <div class="kv__wide"><dt>Objective</dt><dd id="task-objective">—</dd></div>
+            <div class="kv__wide"><dt>Current action</dt><dd id="task-current-action">—</dd></div>
+            <div class="kv__wide"><dt>Planned action</dt><dd id="task-action">Ask a question to start a task.</dd></div>
+            <div class="kv__wide"><dt>Allowed transitions</dt><dd id="task-allowed" class="mono">—</dd></div>
+            <div class="kv__wide"><dt>Validation</dt><dd id="task-validation">—</dd></div>
+          </dl>
+          <div class="segmented" role="radiogroup" aria-label="Mode for new tasks">
+            <span class="segmented__label">New tasks start in</span>
+            <button type="button" role="radio" data-mode="manual" aria-checked="true">Manual</button>
+            <button type="button" role="radio" data-mode="auto" aria-checked="false">Auto</button>
+          </div>
+          <details class="preview" id="task-history-box">
+            <summary>Transitions (<span id="task-history-count">0</span>)</summary>
+            <pre id="task-history"></pre>
+          </details>
+          <p class="task-error" id="task-error" hidden></p>
+        </section>
+
+        <section class="card" aria-labelledby="memory-title-side">
+          <header class="card__head">
+            <h2 id="memory-title-side">Memory</h2>
+            <span class="pill" id="tok-method" title=""></span>
+          </header>
+          <ul class="tokens">
+            <li><button type="button" class="linkish" data-open-memory="short">Short-term</button><span><b id="tok-short">0</b> tokens</span></li>
+            <li><button type="button" class="linkish" data-open-memory="work">Work</button><span><b id="tok-work">0</b> tokens</span></li>
+            <li><button type="button" class="linkish" data-open-memory="long">Long-term</button><span><b id="tok-long">0</b> tokens</span></li>
+            <li class="tokens__total" title="System instructions + profile + invariants + current task + work memory + relevant long-term memory + short-term memory + task state + your current question: the complete context sent to DeepSeek.">
+              <button type="button" class="linkish" data-open-memory="context">Current request/context</button><span><b id="tok-context">0</b> tokens</span></li>
+          </ul>
+          <p class="tokens__sub" id="tok-breakdown"></p>
+          <div class="usage" id="last-usage" hidden></div>
+        </section>
+
+        <section class="card" aria-labelledby="inv-title-side">
+          <header class="card__head">
+            <h2 id="inv-title-side">Invariants</h2>
+            <button type="button" class="button button--small button--ghost" id="btn-manage-invariants">Manage</button>
+          </header>
+          <ul class="inv-list" id="inv-side"></ul>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Profile modal: over the page, never navigates away. -->
+  <dialog class="modal" id="profile-dialog" aria-labelledby="profile-title">
+    <form class="modal__frame" id="profile-form" method="dialog" novalidate>
+      <header class="modal__header">
+        <div>
+          <h2 id="profile-title">Your profile</h2>
+          <p class="modal__sub">How you want the agent to answer. Attached to every request sent to DeepSeek.</p>
+        </div>
+        <button type="button" class="icon-button" data-close aria-label="Close">×</button>
+      </header>
+      <div class="modal__body">
+        <p class="notice" id="profile-state"></p>
+        <div id="profile-fields"></div>
+        <details class="preview">
+          <summary>As sent to DeepSeek (<span id="profile-tokens">0</span> tokens)</summary>
+          <pre id="profile-preview"></pre>
+        </details>
+        <div class="confirm" id="profile-confirm" hidden>
+          <span>Delete the profile? This cannot be undone.</span>
+          <button type="button" class="button button--danger" id="profile-delete-yes">Delete</button>
+          <button type="button" class="button button--ghost" id="profile-delete-no">Keep</button>
+        </div>
+      </div>
+      <footer class="modal__footer">
+        <span class="modal__status" id="profile-status" role="status"></span>
+        <button type="button" class="button button--danger-ghost" id="profile-delete">Delete profile</button>
+        <button type="button" class="button button--ghost" id="profile-clear">Clear profile</button>
+        <button type="button" class="button button--ghost" data-close>Close</button>
+        <button type="submit" class="button button--primary" id="profile-save">Save profile</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Invariants modal. -->
+  <dialog class="modal modal--wide" id="invariants-dialog" aria-labelledby="inv-title">
+    <div class="modal__frame">
+      <header class="modal__header">
+        <div>
+          <h2 id="inv-title">Invariants</h2>
+          <p class="modal__sub">Hard constraints the agent must never violate: architecture, adopted technical solutions,
+            stack limitations and business rules. Every active invariant goes into every request, and requests, plans and
+            results are checked against them. Only you can change them.</p>
+        </div>
+        <button type="button" class="icon-button" data-close aria-label="Close">×</button>
+      </header>
+      <div class="modal__body">
+        <div id="inv-list"></div>
+        <form class="inv-form" id="inv-form" novalidate>
+          <h3 id="inv-form-title">New invariant</h3>
+          <input type="hidden" id="inv-edit-id">
+          <label class="field"><span class="field__label">Name</span>
+            <input class="input" id="inv-name" maxlength="120" placeholder="e.g. Programming stack" required></label>
+          <label class="field"><span class="field__label">Rule</span>
+            <textarea class="input" id="inv-value" rows="2" maxlength="1000" placeholder="e.g. Backend must use Node.js + Express. / Never store full credit card numbers." required></textarea></label>
+          <div class="inv-form__row">
+            <label class="field"><span class="field__label">Category</span>
+              <select class="input" id="inv-category"></select></label>
+            <label class="field field--grow"><span class="field__label">Forbidden terms (comma-separated, optional)</span>
+              <input class="input" id="inv-forbidden" placeholder="e.g. eval(, plain-text password"></label>
+            <label class="check"><input type="checkbox" id="inv-enabled" checked> enabled</label>
+          </div>
+          <div class="inv-form__actions">
+            <button type="button" class="button button--ghost" id="inv-examples">Add examples</button>
+            <span class="spacer"></span>
+            <button type="button" class="button button--ghost" id="inv-cancel-edit" hidden>Cancel edit</button>
+            <button type="submit" class="button button--primary" id="inv-submit">Create invariant</button>
+          </div>
+        </form>
+        <details class="preview">
+          <summary>Rule check dry-run</summary>
+          <div class="dryrun">
+            <input class="input" id="inv-test" placeholder="e.g. Rewrite backend in Python">
+            <button type="button" class="button button--small" id="inv-test-run">Check</button>
+          </div>
+          <pre id="inv-test-out"></pre>
+        </details>
+        <details class="preview">
+          <summary>As sent to DeepSeek (<span id="inv-tokens">0</span> tokens)</summary>
+          <pre id="inv-preview"></pre>
+        </details>
+      </div>
+      <footer class="modal__footer">
+        <span class="modal__status" id="inv-status" role="status"></span>
+        <button type="button" class="button button--ghost" data-close>Close</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- Memory, storage, tasks and context inspector. -->
+  <dialog class="modal modal--wide" id="memory-dialog" aria-labelledby="memory-title">
+    <div class="modal__frame">
+      <header class="modal__header">
+        <div>
+          <h2 id="memory-title">Memory &amp; tasks</h2>
+          <p class="modal__sub">Each memory layer is stored separately and can use its own storage provider.</p>
+        </div>
+        <button type="button" class="icon-button" data-close aria-label="Close">×</button>
+      </header>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="short">Short-term</button>
+        <button type="button" role="tab" data-tab="work">Work</button>
+        <button type="button" role="tab" data-tab="long">Long-term</button>
+        <button type="button" role="tab" data-tab="storage">Storage</button>
+        <button type="button" role="tab" data-tab="tasks">Tasks</button>
+        <button type="button" role="tab" data-tab="context">API context</button>
+      </div>
+      <div class="modal__body" id="memory-body"></div>
+      <footer class="modal__footer">
+        <span class="modal__status" id="memory-status" role="status"></span>
+        <button type="button" class="button button--ghost" data-close>Close</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- Only used when the server requires APP_AUTH_TOKEN. -->
+  <dialog class="modal" id="auth-dialog" aria-labelledby="auth-title">
+    <form class="modal__frame" id="auth-form" method="dialog">
+      <header class="modal__header"><h2 id="auth-title">Access token</h2></header>
+      <div class="modal__body">
+        <p>This server requires an access token (APP_AUTH_TOKEN).</p>
+        <input type="password" id="auth-token" class="input" autocomplete="current-password" aria-label="Access token" required>
+      </div>
+      <footer class="modal__footer"><button type="submit" class="button button--primary">Use token</button></footer>
+    </form>
+  </dialog>
+
+  <script src="markdown.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

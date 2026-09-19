@@ -1,0 +1,25 @@
+{
+  "name": "deepseek-agent-day15",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DeepSeek web agent: controlled task state machine, three configurable memory layers, user profile and enforced invariants",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch-path=src src/server.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "mock:deepseek": "node scripts/mock-deepseek.js",
+    "fetch:tokenizer": "sh scripts/fetch-tokenizer.sh",
+    "install:service": "sudo sh scripts/install-service.sh"
+  },
+  "dependencies": {
+    "@huggingface/tokenizers": "0.2.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

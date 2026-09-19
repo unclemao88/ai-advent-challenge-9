@@ -1,0 +1,18 @@
+node_modules/
+npm-debug.log*
+
+# Secrets: the API key comes from the environment, never from the repository
+.env
+.env.*
+!.env.example
+
+# Runtime data (personal data), created on first start
+data/*
+!data/.gitkeep
+logs/
+
+# Downloaded by scripts/fetch-tokenizer.sh (~8 MB, DeepSeek's licence)
+vendor/deepseek-tokenizer/*
+!vendor/deepseek-tokenizer/README.md
+
+.DS_Store

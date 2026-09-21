@@ -86,7 +86,7 @@ The script does steps 9 to 12 for you and is idempotent. Run it again after `git
 5. downloads DeepSeek's tokenizer (~8 MB, SHA-256 checked) for exact token counts;
 6. creates the `data/` structure (missing files only) and `/etc/deepseek-app.env` (root, `0600`) if absent;
 7. sets permissions: code `root:deepseek-app` read-only, `data/` owned by `deepseek-app`;
-8. installs `/etc/systemd/system/deepseek-app.service` with the detected node path (a unit of the same name from another installation is saved as `.bak-<time>`), runs `systemd-analyze verify`, `daemon-reload`, `enable`, `restart`, and checks `/api/health`.
+8. installs `/etc/tmpfiles.d/deepseek-app-day15.conf` (systemd recreates `data/` before the services start at every boot) and `/etc/systemd/system/deepseek-app.service` with the detected node path (a unit of the same name from another installation is saved as `.bak-<time>`), runs `systemd-analyze verify`, `daemon-reload`, `enable`, `restart`, and checks `/api/health`.
 
 Then set the API key and restart:
 
@@ -133,7 +133,9 @@ Manual installation (without the script) is described in sections 9 to 11.
 ├── public/                        index.html, app.js, styles.css, markdown.js (no framework, no CDN)
 ├── test/                          node:test suites
 ├── scripts/                       install-service.sh, backup-data.sh, restore-data.sh, fetch-tokenizer.sh, mock-deepseek.js
-├── systemd/deepseek-app.service   the unit file
+├── systemd/
+│   ├── deepseek-app.service       the unit file
+│   └── tmpfiles.conf              installed as /etc/tmpfiles.d/deepseek-app-day15.conf (recreates data/ at boot)
 ├── vendor/deepseek-tokenizer/     tokenizer.json (downloaded)
 └── data/                          all persistent data (see below), writable by deepseek-app only
 ```
@@ -307,9 +309,11 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Do not assume `/usr/bin/node`: the installer puts `command -v node` (resolved) into `ExecStart=`. By hand:
+Do not assume `/usr/bin/node`: the installer puts `command -v node` (resolved) into `ExecStart=`. By hand — **create the data directory first**, because the unit lists it in `ReadWritePaths=` and systemd builds the mount namespace before the application runs:
 
 ```bash
+sudo install -d -o deepseek-app -g deepseek-app -m 700 /opt/deepseek-app-day15/data
+sudo cp systemd/tmpfiles.conf /etc/tmpfiles.d/deepseek-app-day15.conf   # recreates it at boot
 NODE=$(readlink -f "$(command -v node)")
 sed "s|^ExecStart=/usr/bin/node |ExecStart=$NODE |" systemd/deepseek-app.service | sudo tee /etc/systemd/system/deepseek-app.service >/dev/null
 sudo systemd-analyze verify /etc/systemd/system/deepseek-app.service
@@ -317,6 +321,12 @@ sudo systemctl daemon-reload
 sudo systemctl enable deepseek-app
 sudo systemctl start deepseek-app
 sudo systemctl status deepseek-app
+```
+
+To follow a per-day unit name instead, install it under that name (the paths and the port stay the same):
+
+```bash
+sudo SERVICE_NAME=deepseek-app-day15 sh scripts/install-service.sh
 ```
 
 Verified in a Debian 12 container with systemd and Node 22 at `/usr/local/bin/node`: the installer (twice, idempotent), `systemd-analyze verify` (clean), `systemd-analyze security` (exposure **1.5 OK**), process user `deepseek-app`, code not writable and env file not readable by the service user, a full task through the service, persistence across `systemctl restart`, automatic restart 5 s after `kill -9`, backup and restore.
@@ -397,6 +407,8 @@ The script stops the service, moves the current `data/` aside as `data.before-re
 | Token counts say *estimated* | `sudo sh /opt/deepseek-app-day15/scripts/fetch-tokenizer.sh /opt/deepseek-app-day15/vendor/deepseek-tokenizer`, then restart. |
 | A data file was edited by hand and broke | It was moved aside as `*.corrupt-<time>` and that domain started empty. Fix and move it back while the service is stopped. |
 | "Invalid task transition … (a paused task can only resume …)" | Expected: the state machine refused an illegal step. Resume or continue as the task bar offers. |
+| `Failed to set up mount namespacing: /opt/deepseek-app-day15/data: No such file or directory` and `Failed at step NAMESPACE` | The data directory does not exist. systemd mounts it (`ReadWritePaths=`) before starting the app, so it must exist first: `sudo install -d -o deepseek-app -g deepseek-app -m 700 /opt/deepseek-app-day15/data`, then restart. The message names `node` only because that is the command it was about to run. The shipped unit tolerates the missing path and `/etc/tmpfiles.d/deepseek-app-day15.conf` recreates it at boot; a unit copied by hand from an older revision does not. |
+| `app.data_dir_unusable` in the journal | The data directory is missing or not writable by `deepseek-app`. The log line names it and the command to fix it (see also section 10). |
 | A task stayed "running" after a crash | On start it is reset to its step, pending; **Continue** re-runs that step. |
 
 ---

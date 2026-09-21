@@ -16,15 +16,20 @@
 #   6. creates data/ with its JSON structure (missing files only), and
 #      /etc/deepseek-app.env (root-only) if it does not exist
 #   7. permissions: code root:deepseek-app read-only; data/ deepseek-app only
-#   8. installs /etc/systemd/system/deepseek-app.service with the real node
-#      path, runs systemctl daemon-reload, enables and (re)starts the service
+#   8. installs /etc/tmpfiles.d/deepseek-app-day15.conf (recreates data/ at boot)
+#      and /etc/systemd/system/<service>.service (default deepseek-app, override
+#      with SERVICE_NAME=) with the real node path, runs systemctl daemon-reload,
+#      enables and (re)starts the service
 set -eu
 
-SERVICE=deepseek-app
+# The unit name. Override to follow another convention, e.g.
+#   sudo SERVICE_NAME=deepseek-app-day15 sh scripts/install-service.sh
+SERVICE=${SERVICE_NAME:-deepseek-app}
 APP_USER=deepseek-app
 TARGET=/opt/deepseek-app-day15
 PORT=3015
 UNIT=/etc/systemd/system/$SERVICE.service
+TMPFILES=/etc/tmpfiles.d/deepseek-app-day15.conf
 ENV_FILE=/etc/deepseek-app.env
 SOURCE=$(cd "$(dirname "$0")/.." && pwd)
 START=yes
@@ -157,8 +162,15 @@ if [ -f "$UNIT" ] && ! grep -q "^WorkingDirectory=$TARGET\$" "$UNIT"; then
   cp -a "$UNIT" "$BACKUP"
   warn "$UNIT belonged to another installation ($(sed -n 's/^WorkingDirectory=//p' "$UNIT")). Saved it as $BACKUP."
 fi
+# systemd-tmpfiles recreates the data directory before the services start at
+# every boot, so the unit's ReadWritePaths= can always be mounted.
+say "Installing $TMPFILES"
+cp "$TARGET/systemd/tmpfiles.conf" "$TMPFILES"
+chmod 644 "$TMPFILES"
+systemd-tmpfiles --create "$TMPFILES" || warn "systemd-tmpfiles could not apply $TMPFILES."
+
 say "Installing $UNIT"
-sed "s|^ExecStart=/usr/bin/node |ExecStart=$NODE |" "$TARGET/systemd/$SERVICE.service" > "$UNIT"
+sed "s|^ExecStart=/usr/bin/node |ExecStart=$NODE |" "$TARGET/systemd/deepseek-app.service" > "$UNIT"
 chmod 644 "$UNIT"
 if command -v systemd-analyze >/dev/null 2>&1; then
   systemd-analyze verify "$UNIT" || warn "systemd-analyze reported problems with $UNIT (see above)."

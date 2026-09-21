@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { constants as fsConstants } from 'node:fs';
+import { access, mkdir } from 'node:fs/promises';
 
 import dotenv from 'dotenv';
 
@@ -55,6 +57,23 @@ logger.info('app.starting', {
   tokenizer: tokenCounter.info.method,
   authRequired: Boolean(config.security.authToken),
 });
+
+// The data directory must exist and be writable before anything else. Under
+// systemd the code tree is read-only, so the service cannot create it itself:
+// say exactly what to do instead of failing later with an opaque error.
+try {
+  await mkdir(config.dataDir, { recursive: true, mode: 0o700 });
+  await access(config.dataDir, fsConstants.W_OK);
+} catch (err) {
+  logger.error('app.data_dir_unusable', {
+    error: err,
+    dataDir: config.dataDir,
+    hint: `Create it and give it to the service user, then start again: `
+      + `install -d -o deepseek-app -g deepseek-app -m 700 ${config.dataDir}`,
+  });
+  await logger.close();
+  process.exit(1);
+}
 
 let built;
 try {

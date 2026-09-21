@@ -74,8 +74,14 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 # The code is read-only for the running service; only data/ is writable.
+# The "-" makes a missing data directory non-fatal: without it systemd fails to
+# build the mount namespace and the service dies at step NAMESPACE before the
+# application can say what is wrong. The directory is created by
+# scripts/install-service.sh and by /etc/tmpfiles.d/deepseek-app-day15.conf
+# (tmpfiles runs before the services at every boot); if it is still missing,
+# the app exits with a message naming the directory.
 ReadOnlyPaths=/opt/deepseek-app-day15
-ReadWritePaths=/opt/deepseek-app-day15/data
+ReadWritePaths=-/opt/deepseek-app-day15/data
 # MemoryDenyWriteExecute is not set: V8's JIT needs writable+executable memory.
 
 [Install]

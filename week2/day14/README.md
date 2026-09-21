@@ -477,7 +477,7 @@ There are 67 tests on Node's built-in runner. They need no API key and no networ
 | "did not answer within 60s" | Retry the step (**Retry**), or raise `DEEPSEEK_TIMEOUT_MS`. |
 | Token counts say *estimated* | `sudo sh /opt/deepseek-app-day14/scripts/fetch-tokenizer.sh`, then restart. |
 | `EADDRINUSE` in the journal | Another process uses port 3014 (`sudo ss -ltnp 'sport = :3014'`). |
-| `EACCES` / storage error | `sudo chown -R deepseek-app:deepseek-app /opt/deepseek-app-day14/data` |
+| `The data directory … is not writable` / `EACCES` | `data/` (or a file in it) belongs to another user, usually after a manual copy as root. The log prints the exact command; it is `sudo chown -R deepseek-app:deepseek-app /opt/deepseek-app-day14/data && sudo chmod 700 /opt/deepseek-app-day14/data`, then restart. Re-running the installer fixes the ownership too. |
 | A data file was corrupted by hand | It has been moved aside as `*.corrupt-<time>` and an empty one is used. Fix and move it back. |
 | `status=203/EXEC` | `ExecStart=` points to the wrong `node`. Re-run the installer, or fix the path. |
 | `Dependencies are not installed` / `ERR_MODULE_NOT_FOUND` | `node_modules` is missing in `/opt/deepseek-app-day14` (the code was copied without installing them). Re-run `sudo sh scripts/install-service.sh`, or install by hand: `cd /opt/deepseek-app-day14 && sudo npm ci --omit=dev && sudo chown -R deepseek-app:deepseek-app node_modules && sudo systemctl restart deepseek-app-day14`. (Running `npm` as `deepseek-app` fails: it cannot use root's npm cache.) |

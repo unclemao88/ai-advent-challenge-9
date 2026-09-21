@@ -141,6 +141,12 @@ chown -R "$APP_USER:$APP_USER" "$TARGET"
 chmod 750 "$TARGET"
 chmod 700 "$TARGET/data"
 chmod 600 "$TARGET"/data/*.json
+# The service writes every memory layer, the profile and the tasks here, so
+# check it as the service user instead of letting the service fail with EACCES.
+if command -v runuser >/dev/null 2>&1; then
+  runuser -u "$APP_USER" -- test -w "$TARGET/data" \
+    || die "$TARGET/data is not writable by $APP_USER. Fix it with: chown -R $APP_USER:$APP_USER $TARGET/data && chmod 700 $TARGET/data"
+fi
 
 # --- 8. systemd ---------------------------------------------------------------------------
 say "Installing $UNIT"

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { ROOT_DIR, loadConfig } from './config/index.js';
 import { createLlmClient } from './api/deepseek.js';
 import { TokenCounter } from './token/tokenCounter.js';
+import { checkDataDir } from './utils/dataDir.js';
 import { createLogger } from './utils/logger.js';
 
 // Local development reads .env from the project root (Node's own env-file
@@ -68,6 +69,17 @@ logger.info('app.starting', {
 });
 if (!llm.configured) {
   logger.warn('app.api_key_missing', { hint: 'Set DEEPSEEK_API_KEY in .env. The UI loads, but questions fail until it is set.' });
+}
+
+// Every memory layer, the profile, the invariants and the tasks live in this
+// directory. Check it once, with a real write, so a permission problem is
+// reported as itself instead of as an EACCES inside the first save.
+const dataDir = await checkDataDir(config.dataDir);
+if (!dataDir.ok) {
+  logger.error('app.data_dir_unusable', { dataDir: config.dataDir, reason: dataDir.reason, fix: dataDir.fix });
+  process.stderr.write(`${dataDir.reason}${dataDir.fix ? `\nFix it with:\n  ${dataDir.fix}\nThen: systemctl restart deepseek-app-day14\n` : '\n'}`);
+  await logger.close();
+  process.exit(1);
 }
 
 let built;

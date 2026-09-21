@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdir, readFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { buildApp, listen } from './helpers.js';
+import { buildApp, listen, tempDir } from './helpers.js';
+import { checkDataDir } from '../src/utils/dataDir.js';
 import { DeepSeekClient } from '../src/api/deepseek.js';
 
 const DATA_FILES = [
@@ -136,6 +137,21 @@ test('memory endpoints show each layer separately, with token counts', async (t)
   assert.ok(tokens.json.tokens.currentContext > tokens.json.tokens.breakdown.request);
   const withText = await request('POST', '/api/token-count', { message: 'draft', includeText: true });
   assert.match(withText.json.messages[0].content, /\[AGENT INVARIANTS\]/);
+});
+
+test('an unusable data directory is reported with the command that fixes it', async (t) => {
+  const dir = await tempDir(t);
+  assert.deepEqual(await checkDataDir(dir), { ok: true });
+
+  const nested = path.join(dir, 'locked', 'data');
+  await mkdir(path.dirname(nested), { mode: 0o500 });
+  t.after(() => chmod(path.dirname(nested), 0o700).catch(() => {}));
+  if (process.getuid?.() === 0) return; // root ignores the mode.
+
+  const result = await checkDataDir(nested);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /cannot be created|not writable/);
+  assert.match(result.fix, /^sudo mkdir -p .*chown -R/);
 });
 
 test('a missing API key is reported clearly and the key is never exposed', async (t) => {

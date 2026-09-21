@@ -18,7 +18,7 @@ with DeepSeek's own tokenizer, and cover the whole request.
 | systemd unit | `deepseek-app-day13` ([`systemd/deepseek-app-day13.service`](systemd/deepseek-app-day13.service)) |
 | Data | `/opt/deepseek-app-day13/data` |
 | Logs | journal + `/opt/deepseek-app-day13/logs/app.log` |
-| Runtime | Node.js ≥ 22, one dependency besides Express (`@huggingface/tokenizers`, pure JS) |
+| Runtime | Node.js ≥ 20.12 (22 LTS recommended), one dependency besides Express (`@huggingface/tokenizers`, pure JS) |
 
 ---
 
@@ -108,12 +108,12 @@ if `node` is not at `/usr/bin/node`, and runs a health check at the end.
 
 ### Manual
 
-**1. Node.js 22+.** Debian 12's own `nodejs` package (18.x) is too old. Install from NodeSource:
+**1. Node.js 20.12+ (22 LTS recommended).** Debian 12's own `nodejs` package (18.x) is too old; 20.12 is the floor because the app reads `.env` with `process.loadEnvFile()`. Install from NodeSource:
 
 ```sh
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
 sudo apt-get install -y nodejs
-node --version      # v22.x or newer
+node --version      # v20.12 or newer
 which node          # /usr/bin/node (otherwise adjust ExecStart in the unit)
 ```
 
@@ -536,6 +536,8 @@ The tests for the exact tokenizer are skipped if `vendor/deepseek-tokenizer/` is
 | "did not answer within 60s" | Network or DeepSeek is slow; retry, or raise `DEEPSEEK_TIMEOUT_MS`. The task is in `error`; press **retry**. |
 | "Unable to connect to DeepSeek API" | Check outbound HTTPS: `sudo -u deepseek-app curl -sI https://api.deepseek.com`. Behind a proxy, set `HTTPS_PROXY` in the unit. |
 | `Cannot find package 'express'` / `app.dependencies_missing` | Dependencies were never installed into the application directory. `cd /opt/deepseek-app-day13 && sudo npm ci --omit=dev && sudo chown -R deepseek-app:deepseek-app node_modules`, then restart. `npm ci` needs the npm registry; behind a proxy set `https_proxy` first. Copying the code without running it (or a `git clone` alone) leaves `node_modules` missing. |
+| `EACCES: permission denied, mkdir '.../data/config'` / `app.init_failed` | `data/` and `logs/` belong to root, so the service user cannot write to them. This happens after a manual deployment. `cd /opt/deepseek-app-day13 && sudo chown -R deepseek-app:deepseek-app data logs vendor && sudo chmod 700 data logs`, then restart. |
+| `Log file ... is not writable (EACCES)` | Same cause, log directory only. The service keeps running and logs to the journal. Same fix. |
 | Service does not start, `status=203/EXEC` | Wrong node path in `ExecStart`. `which node`, fix the unit, `daemon-reload`. |
 | `app.init_failed` / "Storage failure: not writable" | `sudo chown -R deepseek-app:deepseek-app /opt/deepseek-app-day13/data /opt/deepseek-app-day13/logs`. A different `DATA_DIR` must also be added to `ReadWritePaths=` in the unit. |
 | `EADDRINUSE` in the journal | Port 3013 is taken: `sudo ss -ltnp \| grep 3013`. |

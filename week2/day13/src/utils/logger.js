@@ -50,7 +50,8 @@ class RotatingFile {
   #open() {
     const stream = createWriteStream(this.file, { flags: 'a', mode: 0o600 });
     stream.on('error', (err) => {
-      process.stderr.write(`Log file ${this.file} is not writable (${err.code}); logging to stdout only.\n`);
+      process.stderr.write(`Log file ${this.file} is not writable (${err.code}); logging to stdout only. `
+        + `Fix with: chown -R deepseek-app:deepseek-app ${path.dirname(this.file)}\n`);
       this.broken = true;
     });
     return stream;

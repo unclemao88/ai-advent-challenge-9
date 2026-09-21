@@ -49,8 +49,11 @@ if [ -z "$NODE" ]; then
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs"
 fi
-NODE_MAJOR=$("$NODE" -p 'process.versions.node.split(".")[0]')
-[ "$NODE_MAJOR" -ge 22 ] || die "Node.js $("$NODE" --version) found at $NODE; version 22 or newer is required."
+# 20.12 is the floor: process.loadEnvFile() arrived there. 22 LTS is recommended.
+"$NODE" -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>20||(a===20&&b>=12)?0:1)' \
+  || die "Node.js $("$NODE" --version) found at $NODE; 20.12 or newer is required (22 LTS recommended):
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    apt-get install -y nodejs"
 command -v npm >/dev/null 2>&1 || die "npm is not installed (it ships with the NodeSource nodejs package)."
 say "Using Node.js $("$NODE" --version) at $NODE"
 

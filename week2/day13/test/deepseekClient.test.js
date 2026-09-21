@@ -101,8 +101,14 @@ test('invalid responses, timeouts and network failures are reported', async () =
 });
 
 test('a real timeout aborts a hanging request', async () => {
+  // The fake fetch does no I/O, and AbortSignal.timeout's timer does not hold
+  // the event loop open (Node 20), so keep it alive for the duration instead.
+  const keepAlive = setInterval(() => {}, 50);
   const fetchImpl = (url, init) => new Promise((resolve, reject) => {
-    init.signal.addEventListener('abort', () => reject(init.signal.reason));
+    init.signal.addEventListener('abort', () => {
+      clearInterval(keepAlive);
+      reject(init.signal.reason);
+    });
   });
   const client = new DeepSeekClient({ apiKey: KEY, timeoutMs: 1000, fetchImpl });
   const started = Date.now();

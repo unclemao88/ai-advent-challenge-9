@@ -67,9 +67,15 @@ let built;
 try {
   built = await createApp({ config, llm, tokenCounter, logger });
 } catch (err) {
+  const denied = ['EACCES', 'EPERM', 'EROFS'].includes(err.code);
   logger.error('app.init_failed', {
     error: err,
-    hint: `Check that ${config.dataDir} exists and is writable by user ${process.env.USER ?? process.getuid?.()}.`,
+    hint: denied
+      // The usual cause: the directories were created by root, so the service user cannot write.
+      ? `${config.dataDir} is not writable by this process (running as uid ${process.getuid?.() ?? '?'}). Fix with: `
+        + `chown -R deepseek-app:deepseek-app ${config.dataDir}${config.logDir ? ` ${config.logDir}` : ''}`
+        + ' (a data directory outside the application also needs ReadWritePaths= in the systemd unit).'
+      : `Check that ${config.dataDir} exists and is writable by the service user.`,
   });
   await logger.close();
   process.exit(1);

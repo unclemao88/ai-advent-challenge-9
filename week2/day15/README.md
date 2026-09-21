@@ -50,16 +50,16 @@ Then: [Using the agent](#using-the-agent) · [Architecture](#architecture) · [R
 ## 1. Requirements
 
 - Debian 12 (or another systemd-based Linux) for production; macOS or Linux for development
-- Node.js 20 or newer, with npm (see below)
+- Node.js 20.12 or newer, with npm (see below)
 - A DeepSeek API key (<https://platform.deepseek.com>)
 - `curl` (the installer uses it for the health check and the tokenizer download)
 - Outbound HTTPS to `api.deepseek.com` (and once to `huggingface.co` for the tokenizer)
 
-No database, no build step, no CDN: the dependencies are `express`, `dotenv` and `@huggingface/tokenizers` (pure JS).
+No database, no build step, no CDN. `express` is the only runtime dependency; `@huggingface/tokenizers` (pure JS) is used for exact token counts, and the development `.env` is read by Node itself.
 
 ## 2. Node.js version
 
-**Node.js ≥ 20** is required (`engines` in `package.json`); **22 LTS** is recommended. It was developed on Node 24 and verified on Debian 12 with Node 22. Debian's own `nodejs` package is too old, so use NodeSource:
+**Node.js ≥ 20.12** is required (`engines` in `package.json`, for `process.loadEnvFile()`); **22 LTS** is recommended. It was developed on Node 24 and verified on Debian 12 with Node 22. Debian's own `nodejs` package is too old, so use NodeSource:
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
@@ -79,10 +79,10 @@ sudo sh scripts/install-service.sh        # --no-start, --skip-tokenizer
 
 The script does steps 9 to 12 for you and is idempotent. Run it again after `git pull` to update. It never overwrites `data/` or an existing `/etc/deepseek-app.env`:
 
-1. checks root, systemd, Node.js ≥ 20, and finds the real `node` path;
+1. checks root, systemd, Node.js ≥ 20.12, and finds the real `node` path;
 2. creates the system user `deepseek-app` if it is missing;
 3. copies the code to `/opt/deepseek-app-day15` (code only);
-4. `npm ci --omit=dev`;
+4. `npm ci --omit=dev`, and verifies that `express` can actually be imported (it stops if not);
 5. downloads DeepSeek's tokenizer (~8 MB, SHA-256 checked) for exact token counts;
 6. creates the `data/` structure (missing files only) and `/etc/deepseek-app.env` (root, `0600`) if absent;
 7. sets permissions: code `root:deepseek-app` read-only, `data/` owned by `deepseek-app`;
@@ -408,6 +408,7 @@ The script stops the service, moves the current `data/` aside as `data.before-re
 | A data file was edited by hand and broke | It was moved aside as `*.corrupt-<time>` and that domain started empty. Fix and move it back while the service is stopped. |
 | "Invalid task transition … (a paused task can only resume …)" | Expected: the state machine refused an illegal step. Resume or continue as the task bar offers. |
 | `Failed to set up mount namespacing: /opt/deepseek-app-day15/data: No such file or directory` and `Failed at step NAMESPACE` | The data directory does not exist. systemd mounts it (`ReadWritePaths=`) before starting the app, so it must exist first: `sudo install -d -o deepseek-app -g deepseek-app -m 700 /opt/deepseek-app-day15/data`, then restart. The message names `node` only because that is the command it was about to run. The shipped unit tolerates the missing path and `/etc/tmpfiles.d/deepseek-app-day15.conf` recreates it at boot; a unit copied by hand from an older revision does not. |
+| `ERR_MODULE_NOT_FOUND: Cannot find package 'express'` (or another package) | `node_modules` is missing in `/opt/deepseek-app-day15`: `cd /opt/deepseek-app-day15 && sudo npm ci --omit=dev`, then `sudo chown -R root:deepseek-app node_modules`, or simply re-run the installer. |
 | `app.data_dir_unusable` in the journal | The data directory is missing or not writable by `deepseek-app`. The log line names it and the command to fix it (see also section 10). |
 | A task stayed "running" after a crash | On start it is reset to its step, pending; **Continue** re-runs that step. |
 

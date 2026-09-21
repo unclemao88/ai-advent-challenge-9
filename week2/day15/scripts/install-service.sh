@@ -8,10 +8,10 @@
 # itself). It is idempotent: running it again updates code and dependencies
 # and never touches data/ or an existing /etc/deepseek-app.env.
 #
-#   1. checks for root, systemd and Node.js >= 20 (and finds the node binary)
+#   1. checks for root, systemd and Node.js >= 20.12 (and finds the node binary)
 #   2. creates the system user "deepseek-app" if it is missing
 #   3. copies the application into /opt/deepseek-app-day15
-#   4. installs production dependencies (npm ci --omit=dev)
+#   4. installs production dependencies (npm ci --omit=dev) and checks them
 #   5. downloads the DeepSeek tokenizer for exact token counts (optional)
 #   6. creates data/ with its JSON structure (missing files only), and
 #      /etc/deepseek-app.env (root-only) if it does not exist
@@ -61,8 +61,9 @@ if [ -z "$NODE" ]; then
     apt-get install -y nodejs"
 fi
 NODE=$(readlink -f "$NODE")
-NODE_MAJOR=$("$NODE" -p 'process.versions.node.split(".")[0]')
-[ "$NODE_MAJOR" -ge 20 ] || die "Node.js $("$NODE" --version) found at $NODE; version 20 or newer is required."
+# process.loadEnvFile() (used for the development .env) needs 20.12.
+"$NODE" -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>20||(a===20&&b>=12)?0:1)' \
+  || die "Node.js $("$NODE" --version) found at $NODE; version 20.12 or newer is required."
 command -v npm >/dev/null 2>&1 || die "npm is not installed (it ships with the NodeSource nodejs package)."
 case $NODE in
   /root/*|/home/*) die "Node.js at $NODE is inside a home directory, which the service cannot read (ProtectHome). Install a system-wide Node.js." ;;
@@ -92,7 +93,11 @@ fi
 
 # --- 4. Dependencies -----------------------------------------------------------------
 say "Installing production dependencies"
-(cd "$TARGET" && npm ci --omit=dev --no-audit --no-fund)
+(cd "$TARGET" && npm ci --omit=dev --no-audit --no-fund) \
+  || die "npm ci failed in $TARGET. The service cannot run without its dependencies; fix the error above and run this script again."
+# Without node_modules the service dies with ERR_MODULE_NOT_FOUND, so check now.
+(cd "$TARGET" && "$NODE" -e 'import("express").then(() => {}, (e) => { console.error(e.message); process.exit(1); })') \
+  || die "Dependencies are not usable in $TARGET (express cannot be imported). Run: cd $TARGET && npm ci --omit=dev"
 
 # --- 5. Tokenizer ----------------------------------------------------------------------
 if [ "$TOKENIZER" = yes ]; then

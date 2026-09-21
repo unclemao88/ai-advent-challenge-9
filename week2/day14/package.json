@@ -14,11 +14,10 @@
   },
   "dependencies": {
     "@huggingface/tokenizers": "0.2.0",
-    "dotenv": "^17.2.3",
     "express": "^5.2.1"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.12"
   },
   "license": "MIT"
 }

@@ -34,7 +34,7 @@ It listens on port **3014** and runs as the `deepseek-app` user from `/opt/deeps
 
 ## Installation
 
-Requirements: Debian 12 (or similar) with systemd, and **Node.js 20 or newer** (22 LTS recommended). Debian's own `nodejs` package is too old, so use NodeSource:
+Requirements: Debian 12 (or similar) with systemd, and **Node.js 20.12 or newer** (22 LTS recommended). Debian's own `nodejs` package is too old, so use NodeSource:
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
@@ -58,10 +58,10 @@ sudo sh scripts/install-service.sh
 
 The installer:
 
-1. checks for root, systemd and Node.js ≥ 20;
+1. checks for root, systemd and Node.js ≥ 20.12;
 2. creates the `deepseek-app` user if it does not exist yet;
 3. copies the application to `/opt/deepseek-app-day14`. Code only: `data/` is never overwritten;
-4. installs production dependencies (`npm ci --omit=dev`);
+4. installs production dependencies (`npm ci --omit=dev`) and verifies they can actually be loaded — the install stops here rather than leaving a service that cannot start;
 5. downloads DeepSeek's tokenizer (~8 MB, checksum-verified) for exact token counts. Skip this with `--skip-tokenizer`; counts are then labelled as estimates;
 6. creates `data/` and every data file as valid empty JSON (only files that are missing). It also creates the shared configuration file `/etc/deepseek-app.env` (root-only, `0600`) if it does not exist. An existing file is never changed;
 7. gives the application to `deepseek-app`: directory `0750`; `data/` and its files owner-only;
@@ -104,7 +104,7 @@ The data files are created on first start if they are missing.
 All configuration comes from environment variables; `.env.example` documents every variable.
 
 - **Production (systemd).** The unit sets `PORT=3014`, `HOST=0.0.0.0`, `DATA_DIR=/opt/deepseek-app-day14/data` and `NODE_ENV=production` itself. It loads everything else from **`/etc/deepseek-app.env`** (`EnvironmentFile=`), mainly `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL` and `DEEPSEEK_MODEL`. That file is shared by all `deepseek-app-dayNN` services, owned by root with mode `0600`; systemd reads it before dropping privileges. **Keep `PORT`, `HOST` and `DATA_DIR` out of it**: values from an `EnvironmentFile` override the unit's `Environment=` lines, so they would apply to every service. The installer warns if it finds them. In production, a `.env` in the code tree is ignored.
-- **Local development.** The app reads `.env` from the project directory (dotenv). Variables already set in the shell take precedence. `.env` is excluded from git.
+- **Local development.** The app reads `.env` from the project directory with Node's own env-file support (no dependency). Variables already set in the shell take precedence. `.env` is excluded from git.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -480,3 +480,4 @@ There are 67 tests on Node's built-in runner. They need no API key and no networ
 | `EACCES` / storage error | `sudo chown -R deepseek-app:deepseek-app /opt/deepseek-app-day14/data` |
 | A data file was corrupted by hand | It has been moved aside as `*.corrupt-<time>` and an empty one is used. Fix and move it back. |
 | `status=203/EXEC` | `ExecStart=` points to the wrong `node`. Re-run the installer, or fix the path. |
+| `Dependencies are not installed` / `ERR_MODULE_NOT_FOUND` | `node_modules` is missing in `/opt/deepseek-app-day14` (the code was copied without installing them). Re-run `sudo sh scripts/install-service.sh`, or install by hand: `cd /opt/deepseek-app-day14 && sudo npm ci --omit=dev && sudo chown -R deepseek-app:deepseek-app node_modules && sudo systemctl restart deepseek-app-day14`. (Running `npm` as `deepseek-app` fails: it cannot use root's npm cache.) |

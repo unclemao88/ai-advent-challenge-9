@@ -1,18 +1,39 @@
 import path from 'node:path';
 
-import dotenv from 'dotenv';
-
 import { ROOT_DIR, loadConfig } from './config/index.js';
 import { createLlmClient } from './api/deepseek.js';
-import { createApp } from './http/app.js';
 import { TokenCounter } from './token/tokenCounter.js';
 import { createLogger } from './utils/logger.js';
 
-// Local development reads .env from the project root; variables that are
-// already set take precedence. In production (the systemd unit sets
-// NODE_ENV=production) the configuration comes only from the unit and
-// /etc/deepseek-app.env, so a stray .env in the code tree is ignored.
-if (process.env.NODE_ENV !== 'production') dotenv.config({ path: path.join(ROOT_DIR, '.env'), quiet: true });
+// Local development reads .env from the project root (Node's own env-file
+// parser, no dependency); variables that are already set take precedence. In
+// production (the systemd unit sets NODE_ENV=production) the configuration
+// comes only from the unit and /etc/deepseek-app.env, so a stray .env in the
+// code tree is ignored.
+if (process.env.NODE_ENV !== 'production') {
+  try {
+    process.loadEnvFile(path.join(ROOT_DIR, '.env'));
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      process.stderr.write(`Could not read .env: ${err.message}\n`);
+      process.exit(1);
+    }
+  }
+}
+
+// Express is the only runtime dependency. Without node_modules the import
+// below fails with a stack trace that says nothing useful in a service log,
+// so it is loaded here and the real cause is reported instead.
+let createApp;
+try {
+  ({ createApp } = await import('./http/app.js'));
+} catch (err) {
+  if (err.code !== 'ERR_MODULE_NOT_FOUND') throw err;
+  process.stderr.write(`Dependencies are not installed in ${ROOT_DIR} (${err.message}).\n`
+    + `Install them as the owner of that directory and restart the service:\n`
+    + `  cd ${ROOT_DIR} && npm ci --omit=dev\n`);
+  process.exit(1);
+}
 
 const config = loadConfig();
 const logger = createLogger({ level: config.logLevel, logDir: config.logDir, bindings: { service: 'deepseek-app-day14' } });

@@ -7,7 +7,7 @@
 # itself). It is idempotent: running it again updates code and dependencies
 # and never touches data/ or an existing /etc/deepseek-app.env.
 #
-#   1. checks for root and Node.js >= 20
+#   1. checks for root and Node.js >= 20.12
 #   2. creates the system user "deepseek-app" if it is missing
 #   3. creates /opt/deepseek-app-day14 and copies the application into it
 #   4. installs production dependencies (npm ci --omit=dev)
@@ -53,8 +53,9 @@ if [ -z "$NODE" ]; then
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs"
 fi
-NODE_MAJOR=$("$NODE" -p 'process.versions.node.split(".")[0]')
-[ "$NODE_MAJOR" -ge 20 ] || die "Node.js $("$NODE" --version) found at $NODE; version 20 or newer is required."
+# 20.12 is the first release with process.loadEnvFile(), which the app uses.
+"$NODE" -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>20||(a===20&&b>=12)?0:1)' \
+  || die "Node.js $("$NODE" --version) found at $NODE; version 20.12 or newer is required."
 command -v npm >/dev/null 2>&1 || die "npm is not installed (it ships with the NodeSource nodejs package)."
 say "Using Node.js $("$NODE" --version) at $NODE"
 
@@ -81,7 +82,13 @@ fi
 
 # --- 4. Dependencies -----------------------------------------------------------------
 say "Installing production dependencies"
-(cd "$TARGET" && npm ci --omit=dev --no-audit --no-fund)
+(cd "$TARGET" && npm ci --omit=dev --no-audit --no-fund) \
+  || die "npm ci failed in $TARGET. Fix the cause (usually no network or a proxy) and re-run this script; the service cannot start without node_modules."
+# npm can exit 0 and still leave an unusable tree (an interrupted install, a
+# half-copied directory). The service would then fail with ERR_MODULE_NOT_FOUND.
+(cd "$TARGET" && "$NODE" -e "import('express')" >/dev/null 2>&1) \
+  || die "Dependencies are missing in $TARGET/node_modules after npm ci. Run 'cd $TARGET && npm ci --omit=dev' by hand and check its output."
+say "Dependencies OK"
 
 # --- 5. Tokenizer ----------------------------------------------------------------------
 if [ "$TOKENIZER" = yes ]; then

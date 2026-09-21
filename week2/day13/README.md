@@ -535,6 +535,7 @@ The tests for the exact tokenizer are skipped if `vendor/deepseek-tokenizer/` is
 | "insufficient balance" | Top up the DeepSeek account. |
 | "did not answer within 60s" | Network or DeepSeek is slow; retry, or raise `DEEPSEEK_TIMEOUT_MS`. The task is in `error`; press **retry**. |
 | "Unable to connect to DeepSeek API" | Check outbound HTTPS: `sudo -u deepseek-app curl -sI https://api.deepseek.com`. Behind a proxy, set `HTTPS_PROXY` in the unit. |
+| `Cannot find package 'express'` / `app.dependencies_missing` | Dependencies were never installed into the application directory. `cd /opt/deepseek-app-day13 && sudo npm ci --omit=dev && sudo chown -R deepseek-app:deepseek-app node_modules`, then restart. `npm ci` needs the npm registry; behind a proxy set `https_proxy` first. Copying the code without running it (or a `git clone` alone) leaves `node_modules` missing. |
 | Service does not start, `status=203/EXEC` | Wrong node path in `ExecStart`. `which node`, fix the unit, `daemon-reload`. |
 | `app.init_failed` / "Storage failure: not writable" | `sudo chown -R deepseek-app:deepseek-app /opt/deepseek-app-day13/data /opt/deepseek-app-day13/logs`. A different `DATA_DIR` must also be added to `ReadWritePaths=` in the unit. |
 | `EADDRINUSE` in the journal | Port 3013 is taken: `sudo ss -ltnp \| grep 3013`. |

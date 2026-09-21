@@ -4,7 +4,6 @@ import { ROOT_DIR, loadConfig } from '../config.js';
 import { createLlmClient } from '../deepseek/index.js';
 import { TokenCounter } from '../tokens/TokenCounter.js';
 import { createLogger } from '../utils/logger.js';
-import { createApp } from './app.js';
 
 // Local development reads .env from the project root. Variables that are
 // already set (systemd's Environment= and EnvironmentFile=) take precedence.
@@ -25,6 +24,25 @@ process.on('uncaughtException', (err) => {
   logger.error('process.uncaught_exception', { error: err });
   logger.close().finally(() => process.exit(1));
 });
+
+// app.js is imported here, not at the top, so that a missing dependency is
+// reported as one actionable line instead of a module-resolution stack trace.
+// This is the first thing that needs node_modules; everything above is
+// dependency-free, so the message is always reached.
+let createApp;
+try {
+  ({ createApp } = await import('./app.js'));
+} catch (err) {
+  if (err.code !== 'ERR_MODULE_NOT_FOUND') throw err;
+  const missing = err.message.match(/package '([^']+)'|module '([^']+)'/)?.slice(1).find(Boolean) ?? 'a dependency';
+  logger.error('app.dependencies_missing', {
+    missing,
+    hint: `Install the dependencies: cd ${ROOT_DIR} && npm ci --omit=dev`,
+    error: err,
+  });
+  await logger.close();
+  process.exit(1);
+}
 
 const llm = createLlmClient(config.llm);
 const tokenCounter = await TokenCounter.create({ directory: config.tokenizerDir, model: llm.model, logger });

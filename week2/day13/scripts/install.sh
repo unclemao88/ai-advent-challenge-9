@@ -68,9 +68,12 @@ mkdir -p "$TARGET"
 if [ "$SOURCE" != "$TARGET" ]; then
   # Replace code only; never touch data/, logs/, .env or node_modules.
   for item in src public scripts systemd package.json package-lock.json README.md .env.example; do
-    rm -rf "${TARGET:?}/$item"
-    [ -e "$SOURCE/$item" ] && cp -a "$SOURCE/$item" "$TARGET/$item"
+    if [ -e "$SOURCE/$item" ]; then
+      rm -rf "${TARGET:?}/$item"
+      cp -a "$SOURCE/$item" "$TARGET/$item"
+    fi
   done
+  [ -f "$TARGET/package-lock.json" ] || die "package-lock.json is missing. npm ci needs it; copy the complete checkout."
   mkdir -p "$TARGET/vendor/deepseek-tokenizer"
   if [ -f "$SOURCE/vendor/deepseek-tokenizer/tokenizer.json" ]; then
     cp -a "$SOURCE/vendor/deepseek-tokenizer/." "$TARGET/vendor/deepseek-tokenizer/"
@@ -79,7 +82,16 @@ fi
 
 # --- 4. Dependencies ---------------------------------------------------------------
 say "Installing production dependencies"
-(cd "$TARGET" && npm ci --omit=dev --no-audit --no-fund)
+if ! (cd "$TARGET" && npm ci --omit=dev --no-audit --no-fund); then
+  die "npm ci failed in $TARGET. It must reach the npm registry (behind a proxy, set https_proxy).
+Without node_modules the service cannot start: Cannot find package 'express'."
+fi
+# npm can exit 0 and still leave nothing usable (an interrupted run, a stale
+# cache, a wrong directory). The service would then fail with
+# ERR_MODULE_NOT_FOUND at startup, so verify before installing the unit.
+for pkg in express @huggingface/tokenizers; do
+  [ -d "$TARGET/node_modules/$pkg" ] || die "node_modules/$pkg is missing after npm ci. Run 'npm ci --omit=dev' in $TARGET."
+done
 
 # --- 5. Tokenizer ------------------------------------------------------------------
 if [ "$TOKENIZER" = yes ]; then
